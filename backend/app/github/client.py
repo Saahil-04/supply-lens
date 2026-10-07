@@ -1,18 +1,31 @@
 import re
+import os
 from typing import Any
 import httpx
 import base64
+from dotenv import load_dotenv
 
-GITHUB_API_URL = "https://api.github.com"
+load_dotenv()
+
+GITHUB_API_URL = os.getenv(
+    "GITHUB_API_URL",
+    "https://api.github.com",
+)
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 class GitHubClient:
     def __init__(self):
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+        if GITHUB_TOKEN:
+            headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+
         self.client = httpx.AsyncClient(
-            base_url= GITHUB_API_URL,
-            headers = {
-                "Accept":"application/vnd.github+json",
-                "X-GitHub-Api-Version":"2022-11-28",
-            },
+            base_url=GITHUB_API_URL,
+            headers=headers,
             timeout=10.0,
         )
         
