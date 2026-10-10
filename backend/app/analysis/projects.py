@@ -97,10 +97,17 @@ def build_npm_projects(
     manifests = dependency_files["manifests"]
     lockfiles = dependency_files["lockfiles"]
 
-    lockfiles_by_directory = {
-        get_parent_directory(lockfile["path"]): lockfile
-        for lockfile in lockfiles
-    }
+    # npm-shrinkwrap.json takes precedence over package-lock.json in the same
+    # directory. Prefer supported npm lockfiles over yarn/pnpm files because
+    # this analyzer currently builds resolved graphs only from npm lockfiles.
+    priority = {"npm-shrinkwrap.json": 0, "package-lock.json": 1, "yarn.lock": 2, "pnpm-lock.yaml": 3}
+    lockfiles_by_directory: dict[str, dict[str, str]] = {}
+    for lockfile in sorted(
+        lockfiles,
+        key=lambda item: (get_parent_directory(item["path"]), priority.get(item["path"].rsplit("/", 1)[-1], 99)),
+    ):
+        directory = get_parent_directory(lockfile["path"])
+        lockfiles_by_directory.setdefault(directory, lockfile)
 
     projects: list[NpmProject] = []
 
