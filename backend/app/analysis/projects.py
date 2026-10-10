@@ -96,7 +96,7 @@ def build_npm_projects(
 ) -> tuple[list[NpmProject], list[OrphanedLockfile]]:
     manifests = dependency_files["manifests"]
     lockfiles = dependency_files["lockfiles"]
-     
+
     lockfiles_by_directory = {
         get_parent_directory(lockfile["path"]): lockfile
         for lockfile in lockfiles
@@ -107,23 +107,43 @@ def build_npm_projects(
     for manifest in manifests:
         path = manifest["path"]
         directory = get_parent_directory(path)
-
         package_data = manifest_contents.get(path, {})
-        
-        workspace_patterns = extract_workspace_patterns(package_data)
-       
+
+        workspace_patterns = extract_workspace_patterns(
+            package_data
+        )
 
         projects.append(
             NpmProject(
                 root_path=directory,
                 manifest=manifest,
                 manifest_data=package_data,
-                lockfile=lockfiles_by_directory.get(directory),
+                lockfile=lockfiles_by_directory.get(
+                    directory
+                ),
                 package_name=package_data.get("name"),
                 package_version=package_data.get("version"),
-                is_workspace_root=bool(workspace_patterns),
+                is_workspace_root=bool(
+                    workspace_patterns
+                ),
                 workspace_patterns=workspace_patterns,
                 workspace_members=[],
+            )
+        )
+
+    manifest_paths = [
+        manifest["path"]
+        for manifest in manifests
+    ]
+
+    for project in projects:
+        if not project.is_workspace_root:
+            continue
+
+        project.workspace_members = (
+            resolve_workspace_members(
+                project,
+                manifest_paths,
             )
         )
 
@@ -135,13 +155,18 @@ def build_npm_projects(
     orphaned_lockfiles: list[OrphanedLockfile] = []
 
     for lockfile in lockfiles:
-        directory = get_parent_directory(lockfile["path"])
+        directory = get_parent_directory(
+            lockfile["path"]
+        )
 
         if directory not in manifest_directories:
             orphaned_lockfiles.append(
                 OrphanedLockfile(
                     path=lockfile["path"],
-                    reason="No package.json found in the same directory",
+                    reason=(
+                        "No package.json found "
+                        "in the same directory"
+                    ),
                 )
             )
 

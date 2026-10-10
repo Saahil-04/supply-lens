@@ -20,6 +20,13 @@ class ImpactResult:
     target_version:str
     affected_projects:list[ProjectImpact]
     
+@dataclass
+class RepositoryImpactResult:
+    target_name: str
+    target_version: str
+    affected_projects: list[ProjectImpact]
+    projects_analyzed: int    
+    
 def find_affected_packages(
     graph: DependencyGraph,
     dependency_path: str,
