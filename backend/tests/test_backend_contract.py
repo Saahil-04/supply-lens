@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from app.analysis.dependencies import resolve_dependency_path
+from app.analysis.dependencies import parse_dependency_node, resolve_dependency_path
 from app.analysis.graph import DependencyType, build_dependency_graph
 from app.analysis.osv import normalize_vulnerability, scan_packages
 from app.analysis.sbom import build_cyclonedx_sbom
@@ -36,6 +36,22 @@ class URLValidationTests(unittest.TestCase):
         for url in ("https://example.com/acme/widget", "https://github.com/acme/widget/tree/main", "not a URL"):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 GitHubClient.parse_repository_url(url)
+
+
+class DependencyMetadataTests(unittest.TestCase):
+    def test_omitted_npm_lockfile_flags_mean_false(self):
+        node = parse_dependency_node("node_modules/example", {"version": "1.0.0"})
+        self.assertFalse(node.dev)
+        self.assertFalse(node.optional)
+        self.assertFalse(node.dev_optional)
+
+    def test_malformed_explicit_flags_remain_unknown(self):
+        node = parse_dependency_node("node_modules/example", {
+            "version": "1.0.0", "dev": "yes", "optional": 1, "devOptional": None,
+        })
+        self.assertIsNone(node.dev)
+        self.assertIsNone(node.optional)
+        self.assertIsNone(node.dev_optional)
 
 
 class GraphTests(unittest.TestCase):

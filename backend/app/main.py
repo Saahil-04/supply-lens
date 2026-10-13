@@ -1,6 +1,7 @@
 """SupplyLens HTTP API: compact analysis creation and paginated result resources."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import timezone
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="SupplyLens API",
     description="Repository-wide JavaScript/TypeScript dependency and supply-chain risk analysis",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 
@@ -43,7 +44,7 @@ def _compact(entry: AnalysisEntry) -> dict[str, Any]:
     metadata = result.get("analysis_metadata", {})
     vulnerability_status = metadata.get("vulnerability_analysis_status", "unknown")
     inventory_status = metadata.get("status", "unknown")
-    overall_status = "complete" if inventory_status != "partial" and vulnerability_status == "complete" else "partial"
+    overall_status = "complete" if inventory_status == "inventory_complete" and vulnerability_status == "complete" else "partial"
     return {
         "analysis_id": entry.analysis_id,
         "status": overall_status,
@@ -83,6 +84,37 @@ def _contains(item: dict[str, Any], query: str, fields: tuple[str, ...]) -> bool
 def _get_list(entry: AnalysisEntry, key: str) -> list[dict[str, Any]]:
     value = entry.result.get(key, [])
     return value if isinstance(value, list) else []
+
+
+def _finding_id(item: dict[str, Any]) -> str:
+    """Stable identifier for an advisory affecting a particular package instance."""
+    identity = "\0".join((
+        str(item.get("id") or ""),
+        str(item.get("package_id") or ""),
+        str(item.get("installed_version") or ""),
+    ))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _compact_vulnerability(item: dict[str, Any], analysis_id: str) -> dict[str, Any]:
+    """Keep the list payload small; full details and references live on the detail route."""
+    return {
+        "finding_id": _finding_id(item),
+        "id": item.get("id"),
+        "aliases": item.get("aliases", []),
+        "summary": item.get("summary"),
+        "severity": item.get("severity", "UNKNOWN"),
+        "cvss_score": item.get("cvss_score"),
+        "package_id": item.get("package_id"),
+        "package_name": item.get("package_name"),
+        "installed_version": item.get("installed_version"),
+        "package_path": item.get("package_path"),
+        "lockfile": item.get("lockfile"),
+        "fixed_versions": item.get("fixed_versions", []),
+        "modified": item.get("modified"),
+        "published": item.get("published"),
+        "links": {"detail": f"/analyses/{analysis_id}/vulnerabilities/{_finding_id(item)}"},
+    }
 
 
 @app.get("/health")
@@ -172,7 +204,7 @@ async def get_vulnerabilities(
     entry = _entry_or_404(analysis_id)
     items = _get_list(entry, "vulnerabilities")
     if q:
-        items = [item for item in items if _contains(item, q, ("id", "summary", "details", "package_name", "package_path", "aliases"))]
+        items = [item for item in items if _contains(item, q, ("id", "summary", "package_name", "package_path", "aliases"))]
     if severity:
         items = [item for item in items if str(item.get("severity", "UNKNOWN")).upper() == severity]
     if package_name:
@@ -180,7 +212,23 @@ async def get_vulnerabilities(
     if has_fix is not None:
         items = [item for item in items if bool(item.get("fixed_versions")) is has_fix]
     items.sort(key=lambda item: (-(float(item.get("cvss_score") or 0)), {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(str(item.get("severity", "UNKNOWN")).upper(), 4), str(item.get("package_name", "")), str(item.get("id", ""))))
-    return _page(items, offset, limit, {"q": q, "severity": severity, "package_name": package_name, "has_fix": has_fix})
+    compact_items = [_compact_vulnerability(item, analysis_id) for item in items[offset:offset + limit]]
+    total = len(items)
+    return {
+        "items": compact_items,
+        "pagination": {"offset": offset, "limit": limit, "total": total, "has_more": offset + limit < total},
+        "filters": {"q": q, "severity": severity, "package_name": package_name, "has_fix": has_fix},
+    }
+
+
+@app.get("/analyses/{analysis_id}/vulnerabilities/{finding_id}")
+async def get_vulnerability_detail(analysis_id: str, finding_id: str):
+    """Return the full advisory details for one specific affected package instance."""
+    entry = _entry_or_404(analysis_id)
+    for item in _get_list(entry, "vulnerabilities"):
+        if _finding_id(item) == finding_id:
+            return {"finding_id": finding_id, **item}
+    raise HTTPException(status_code=404, detail="Vulnerability finding not found in this analysis")
 
 
 @app.get("/analyses/{analysis_id}/recommendations")
@@ -250,7 +298,7 @@ async def get_graph_neighborhood(
     }
 
 
-@app.get("/analyses/{analysis_id}/sbom")
+@app.get("/analyses/{analysis_id    }/sbom")
 async def download_sbom(analysis_id: str):
     entry = _entry_or_404(analysis_id)
     sbom = entry.result.get("sbom")

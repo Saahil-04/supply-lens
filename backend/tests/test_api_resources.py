@@ -22,7 +22,7 @@ class AnalysisResourceTests(unittest.IsolatedAsyncioTestCase):
                 {"id": "package-lock.json::node_modules/a", "name": "a"},
                 {"id": "package-lock.json::node_modules/b", "name": "b"},
             ], "edges": [{"source": "package-lock.json::node_modules/a", "target": "package-lock.json::node_modules/b", "dependency_type": "normal"}]},
-            "vulnerabilities": [{"id": "GHSA-test", "severity": "HIGH", "package_name": "b", "summary": "test advisory", "fixed_versions": ["2.1.0"], "cvss_score": 8.1}],
+            "vulnerabilities": [{"id": "GHSA-test", "severity": "HIGH", "package_name": "b", "summary": "test advisory", "details": "A long full advisory description", "references": ["https://example.test/advisory"], "package_id": "package-lock.json::node_modules/b", "installed_version": "2.0.0", "package_path": "node_modules/b", "lockfile": "package-lock.json", "aliases": ["CVE-2026-0001"], "modified": "2026-09-01T00:00:00Z", "published": "2026-08-01T00:00:00Z", "fixed_versions": ["2.1.0"], "cvss_score": 8.1}],
             "recommendations": [{"package_name": "b", "installed_version": "2.0.0", "fixed_versions": ["2.1.0"], "recommendation": "Upgrade"}],
             "sbom": {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []},
             "analysis_metadata": {"status": "partial", "vulnerability_analysis_status": "partial", "warnings": ["test warning"]},
@@ -55,7 +55,17 @@ class AnalysisResourceTests(unittest.IsolatedAsyncioTestCase):
 
         vulns = await self.client.get(f"/analyses/{analysis_id}/vulnerabilities", params={"severity": "HIGH", "has_fix": "true"})
         self.assertEqual(vulns.status_code, 200)
-        self.assertEqual(vulns.json()["items"][0]["id"], "GHSA-test")
+        finding = vulns.json()["items"][0]
+        self.assertEqual(finding["id"], "GHSA-test")
+        self.assertIn("finding_id", finding)
+        self.assertIn("detail", finding["links"])
+        self.assertNotIn("details", finding)
+        self.assertNotIn("references", finding)
+
+        detail = await self.client.get(finding["links"]["detail"])
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["details"], "A long full advisory description")
+        self.assertEqual(detail.json()["references"], ["https://example.test/advisory"])
 
         recs = await self.client.get(f"/analyses/{analysis_id}/recommendations")
         self.assertEqual(recs.json()["pagination"]["total"], 1)

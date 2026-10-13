@@ -18,6 +18,18 @@ class DependencyNode:
     dev_optional: bool | None = None
     is_link: bool = False
 
+def _lockfile_flag(data: dict[str, Any], key: str) -> bool | None:
+    """Read an npm lockfile boolean flag.
+
+    In supported npm lockfile v2/v3 package entries these flags are omitted when
+    false. Treat an omitted key as false, but preserve malformed explicit values
+    as unknown rather than silently coercing them.
+    """
+    if key not in data:
+        return False
+    value = data.get(key)
+    return value if isinstance(value, bool) else None
+
 
 def parse_dependency_node(path: str, data: dict[str, Any]) -> DependencyNode:
     """Parse one npm lockfile package entry without guessing missing versions."""
@@ -37,12 +49,11 @@ def parse_dependency_node(path: str, data: dict[str, Any]) -> DependencyNode:
         optional_dependencies=data.get("optionalDependencies", {}) if isinstance(data.get("optionalDependencies", {}), dict) else {},
         peer_dependencies=data.get("peerDependencies", {}) if isinstance(data.get("peerDependencies", {}), dict) else {},
         peer_dependencies_meta=data.get("peerDependenciesMeta", {}) if isinstance(data.get("peerDependenciesMeta", {}), dict) else {},
-        dev=data.get("dev") if isinstance(data.get("dev"), bool) else None,
-        optional=data.get("optional") if isinstance(data.get("optional"), bool) else None,
-        dev_optional=data.get("devOptional") if isinstance(data.get("devOptional"), bool) else None,
+        dev=_lockfile_flag(data, "dev"),
+        optional=_lockfile_flag(data, "optional"),
+        dev_optional=_lockfile_flag(data, "devOptional"),
         is_link=data.get("link") is True,
     )
-
 
 def resolve_dependency_path(package_path: str, dependency_name: str, package_paths: set[str]) -> str | None:
     """Resolve an npm dependency using Node's upward node_modules lookup pattern."""

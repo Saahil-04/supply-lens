@@ -251,7 +251,10 @@ async def analyze_repository(repository_url: str) -> dict[str, Any]:
                 "manifests_found": len(manifest_paths), "lockfiles_found": len(lockfile_paths),
                 "total_packages": len(packages), "direct_packages": direct_count,
                 "transitive_packages": transitive_count, "dependency_edges": len(edges),
+                # This count is finding instances (advisory × affected package instance),
+                # not the number of distinct advisory IDs.
                 "vulnerabilities_found": len(vulnerabilities) if scan_succeeded else None,
+                "unique_advisories_found": len({v.get("id") for v in vulnerabilities if v.get("id")}) if scan_succeeded else None,
                 "risk_level": risk_level,
             },
             "projects": project_records, "packages": packages,
