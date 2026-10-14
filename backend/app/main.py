@@ -298,7 +298,7 @@ async def get_graph_neighborhood(
     }
 
 
-@app.get("/analyses/{analysis_id    }/sbom")
+@app.get("/analyses/{analysis_id}/sbom")
 async def download_sbom(analysis_id: str):
     entry = _entry_or_404(analysis_id)
     sbom = entry.result.get("sbom")
