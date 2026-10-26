@@ -1,4 +1,4 @@
-import { ChevronDown, RefreshCw, ShieldCheck } from 'lucide-react'
+import { ChevronDown, PanelLeftClose, RefreshCw, ShieldCheck } from 'lucide-react'
 import type { Analysis } from '../../api'
 import { n } from '../../lib/format'
 import { tabs, type Tab } from '../../lib/tabs'
@@ -10,16 +10,19 @@ export function Sidebar({
   analysis,
   apiOnline,
   onCheckApi,
+  onClose,
 }: {
   tab: Tab
   onTabChange: (tab: Tab) => void
   analysis: Analysis | null
   apiOnline: boolean | null
   onCheckApi: () => void
+  onClose: () => void
 }) {
   return (
     <aside className="sidebar">
       <div className="brand">
+        <button className="icon-button sidebar-close" onClick={onClose} aria-label="Collapse sidebar" title="Collapse sidebar"><PanelLeftClose size={17} /></button>
         <div className="brand-mark">
           <ShieldCheck size={21} />
         </div>

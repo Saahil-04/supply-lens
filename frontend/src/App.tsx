@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAnalysisSession } from './hooks/useAnalysisSession'
 import { downloadSbom } from './lib/downloadSbom'
 import type { Tab } from './lib/tabs'
@@ -15,21 +15,32 @@ import { VulnerabilitiesView } from './views/VulnerabilitiesView'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('Overview')
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('supplylens-theme')
+    return saved === 'dark' ? 'dark' : 'light'
+  })
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('supplylens-theme', theme)
+  }, [theme])
   const session = useAnalysisSession({ onShowOverview: () => setTab('Overview') })
   const { analysis } = session
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
       <Sidebar
         tab={tab}
         onTabChange={setTab}
         analysis={analysis}
         apiOnline={session.apiOnline}
         onCheckApi={() => void session.checkApi()}
+        onClose={() => setSidebarOpen(false)}
       />
 
       <main className="main-area">
-        <Topbar tab={tab} hasAnalysis={!!analysis} onClose={session.forgetAnalysis} />
+        <Topbar tab={tab} hasAnalysis={!!analysis} onClose={session.forgetAnalysis} sidebarOpen={sidebarOpen} onOpenSidebar={() => setSidebarOpen(true)} theme={theme} onToggleTheme={() => setTheme((current) => current === 'light' ? 'dark' : 'light')} />
 
         <div className="page-content">
           {!analysis && tab !== 'Overview' && (
