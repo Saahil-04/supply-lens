@@ -98,8 +98,19 @@ class RepositoryServiceTests(unittest.IsolatedAsyncioTestCase):
             async def close(self):
                 self.closed = True
         fake = FakeGitHub()
-        with patch.object(service_module, "GitHubClient", return_value=fake), patch.object(service_module, "scan_packages", new=AsyncMock(return_value=[])):
-            result = await service_module.analyze_repository("https://github.com/acme/demo")
+        self.scan_packages_mock = AsyncMock(return_value=[])
+
+        with (
+            patch.object(service_module, "GitHubClient", return_value=fake),
+            patch.object(
+                service_module,
+                "scan_packages",
+                new=self.scan_packages_mock,
+            ),
+        ):
+            result = await service_module.analyze_repository(
+                "https://github.com/acme/demo"
+            )
         return result
 
     async def test_manifest_without_lockfile_returns_partial_inventory(self):
@@ -130,6 +141,68 @@ class RepositoryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["packages"][0]["is_dev"])
         self.assertEqual(result["analysis_metadata"]["vulnerability_analysis_status"], "complete")
 
+    async def test_orphan_lockfile_keeps_explicit_partial_coverage_status(self):
+        tree = [
+            {"type": "blob", "path": "package.json", "sha": "manifest"},
+            {"type": "blob", "path": "package-lock.json", "sha": "lock"},
+            {"type": "blob", "path": "legacy/package-lock.json", "sha": "orphan-lock"},
+        ]
+        lockfile = {"name": "demo", "lockfileVersion": 3, "packages": {
+            "": {"name": "demo", "version": "1.0.0"},
+            "node_modules/left-pad": {"version": "1.3.0"},
+        }}
+        result = await self._run_service(tree, {
+            "manifest": json.dumps({"name": "demo", "dependencies": {"left-pad": "^1.3.0"}}),
+            "lock": json.dumps(lockfile),
+            # The orphan is intentionally present but not assigned to a project.
+            "orphan-lock": json.dumps({"lockfileVersion": 3, "packages": {"node_modules/hidden": {"version": "1.0.0"}}}),
+        })
+        self.assertEqual(
+            result["analysis_metadata"]["status"],
+            "inventory_complete",
+        )
+
+        self.assertEqual(
+            result["analysis_metadata"]["vulnerability_analysis_status"],
+            "complete",
+        )
+
+        self.assertTrue(
+            any(
+                "Orphaned lockfile legacy/package-lock.json" in warning
+                for warning in result["analysis_metadata"]["warnings"]
+            )
+        )
+
+        orphan_packages = [
+            package
+            for package in result["packages"]
+            if package["name"] == "hidden"
+        ]
+
+        self.assertEqual(len(orphan_packages), 1)
+        self.assertEqual(orphan_packages[0]["version"], "1.0.0")
+        self.assertFalse(orphan_packages[0]["is_direct"])
+        # Confirm the orphan package is submitted for vulnerability scanning.
+        self.assertTrue(self.scan_packages_mock.await_count > 0)
+
+        scanned_packages = [
+            package
+            for call in self.scan_packages_mock.await_args_list
+            for package in call.args[0]
+        ]
+
+        hidden_packages = [
+            package
+            for package in scanned_packages
+            if package["name"] == "hidden"
+        ]
+
+        self.assertEqual(len(hidden_packages), 1)
+        self.assertEqual(hidden_packages[0]["version"], "1.0.0")
+        self.assertFalse(hidden_packages[0]["is_direct"])
+        self.assertEqual(hidden_packages[0]["direct_projects"], [])
+
     async def test_repository_without_manifests_has_clear_error(self):
         class FakeGitHub:
             async def get_repository(self, url):
@@ -140,6 +213,86 @@ class RepositoryServiceTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(service_module, "GitHubClient", return_value=FakeGitHub()):
             with self.assertRaisesRegex(ValueError, "No package.json manifests"):
                 await service_module.analyze_repository("https://github.com/acme/demo")
+    
+     
+    async def test_incomplete_coverage_preserves_findings_and_risk_level(self):
+        tree = [
+            {"type": "blob", "path": "package.json", "sha": "manifest"},
+            {"type": "blob", "path": "package-lock.json", "sha": "lock"},
+        ]
+
+        manifest = {
+            "name": "demo",
+            "dependencies": {
+                "left-pad": "^1.3.0",
+                "missing-package": "^2.0.0",
+            },
+        }
+
+        lockfile = {
+            "name": "demo",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "demo", "version": "1.0.0"},
+                "node_modules/left-pad": {"version": "1.3.0"},
+            },
+        }
+
+        finding = {
+            "id": "GHSA-demo",
+            "package_id": "package-lock.json::node_modules/left-pad",
+            "package_name": "left-pad",
+            "installed_version": "1.3.0",
+            "severity": "HIGH",
+            "fixed_versions": ["1.3.1"],
+        }
+
+        with (
+            patch.object(
+                service_module,
+                "GitHubClient",
+                return_value=type(
+                    "FakeGitHub",
+                    (),
+                    {
+                        "get_repository": AsyncMock(return_value={
+                            "owner": {"login": "acme"},
+                            "name": "demo",
+                            "full_name": "acme/demo",
+                            "default_branch": "main",
+                        }),
+                        "get_latest_commit_sha": AsyncMock(return_value="abc123"),
+                        "get_repository_tree": AsyncMock(return_value=tree),
+                        "get_file_content": AsyncMock(
+                            side_effect=lambda owner, repository, sha: {
+                                "manifest": json.dumps(manifest),
+                                "lock": json.dumps(lockfile),
+                            }[sha]
+                        ),
+                        "close": AsyncMock(),
+                    },
+                )(),
+            ),
+            patch.object(
+                service_module,
+                "scan_packages",
+                new=AsyncMock(return_value=[finding]),
+            ),
+        ):
+            result = await service_module.analyze_repository(
+                "https://github.com/acme/demo"
+            )
+
+        self.assertEqual(
+            result["analysis_metadata"]["vulnerability_analysis_status"],
+            "partial",
+        )
+        self.assertEqual(result["summary"]["vulnerabilities_found"], 1)
+        self.assertEqual(result["summary"]["unique_advisories_found"], 1)
+        self.assertEqual(result["summary"]["risk_level"], "high")
+        self.assertEqual(len(result["vulnerabilities"]), 1)
+
+            
 
 
 class SBOMTests(unittest.TestCase):

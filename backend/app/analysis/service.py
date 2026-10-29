@@ -156,6 +156,38 @@ async def analyze_repository(repository_url: str) -> dict[str, Any]:
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
                 warnings.append(f"Could not analyze lockfile {lockfile['path']}: {exc}")
 
+        # Orphaned npm lockfiles are not attached to a project, but their
+        # resolved package instances still belong in repository-wide inventory.
+        # Keep their own lockfile path as the graph identity; never assign them
+        # to a nearby project without a matching manifest.
+        orphan_graph_paths: set[str] = set()
+        for orphan in orphaned_lockfiles:
+            lockfile = next((item for item in discovered["lockfiles"] if item["path"] == orphan.path), None)
+            if lockfile is None:
+                continue
+            lockfile_name = lockfile["path"].rsplit("/", 1)[-1]
+            if lockfile_name not in SUPPORTED_NPM_LOCKFILES:
+                warnings.append(f"{lockfile['path']} is orphaned and {lockfile_name} is not supported for resolved npm graph analysis yet.")
+                continue
+            if lockfile["path"] in graphs:
+                orphan_graph_paths.add(lockfile["path"])
+                continue
+            try:
+                raw = await client.get_file_content(owner, repository_name, lockfile["sha"])
+                lockfile_data = json.loads(raw)
+                packages_data = lockfile_data.get("packages") if isinstance(lockfile_data, dict) else None
+                if not isinstance(packages_data, dict):
+                    raise ValueError("lockfile has no valid 'packages' object (npm lockfile v2/v3 required)")
+                if lockfile_data.get("lockfileVersion") not in (2, 3):
+                    warnings.append(f"{lockfile['path']} has lockfileVersion {lockfile_data.get('lockfileVersion')!r}; graph support is validated for npm lockfile v2/v3.")
+                graph = build_dependency_graph(packages_data)
+                graphs[lockfile["path"]] = graph
+                orphan_graph_paths.add(lockfile["path"])
+                if graph.unresolved:
+                    warnings.append(f"{lockfile['path']}: {len(graph.unresolved)} dependency or package entries could not be resolved in the orphan lockfile graph.")
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+                warnings.append(f"Could not analyze orphaned lockfile {lockfile['path']}: {exc}")
+
         project_graphs = map_projects_to_graphs(projects, graphs)
         package_records: dict[tuple[str, str], dict[str, Any]] = {}
         edge_records: dict[tuple[str, str, str, str], dict[str, str]] = {}
@@ -199,6 +231,27 @@ async def analyze_repository(repository_url: str) -> dict[str, Any]:
                 "workspace_members": project.workspace_members, "direct_dependencies": direct_dependencies,
             })
 
+        # Add package and edge records from orphan lockfiles separately. These
+        # packages are inventoried and scanned, but are not marked direct because
+        # there is no corresponding manifest from which to establish declarations.
+        for graph_key in sorted(orphan_graph_paths):
+            graph = graphs.get(graph_key)
+            if graph is None:
+                continue
+            for package_path, node in graph.nodes.items():
+                key = (graph_key, package_path)
+                package_records.setdefault(key, {
+                    "id": f"{graph_key}::{package_path}", "name": node.name, "version": node.version,
+                    "path": package_path, "lockfile": graph_key, "is_direct": False, "direct_projects": [],
+                    "is_dev": node.dev, "is_optional": node.optional, "is_dev_optional": node.dev_optional,
+                    "is_link": node.is_link, "resolved": node.resolved, "integrity": node.integrity,
+                })
+            for edge in graph.edges:
+                edge_records[(graph_key, edge.source, edge.target, edge.dependency_type.value)] = {
+                    "source": f"{graph_key}::{edge.source}", "target": f"{graph_key}::{edge.target}",
+                    "dependency_type": edge.dependency_type.value,
+                }
+
         for key in direct_instance_keys:
             if key in package_records:
                 package_records[key]["is_direct"] = True
@@ -210,7 +263,17 @@ async def analyze_repository(repository_url: str) -> dict[str, Any]:
         for orphan in orphaned_lockfiles:
             warnings.append(f"Orphaned lockfile {orphan.path}: {orphan.reason}")
 
-        inventory_partial = bool(warnings) or analyzed_projects < len(projects) or len(manifest_contents) < len(discovered["manifests"])
+        # Informational repository warnings (such as a successfully inventoried
+        # orphan lockfile) do not by themselves mean inventory failed.
+        inventory_partial = (
+            analyzed_projects < len(projects)
+            or len(manifest_contents) < len(discovered["manifests"])
+            or any(
+                orphan.path not in orphan_graph_paths
+                for orphan in orphaned_lockfiles
+            )
+            or any(bool(graph.unresolved) for graph in graphs.values())
+        )
         unresolved_declarations = any(not dep["resolved"] for project in project_records for dep in project["direct_dependencies"])
         unresolved_graph_entries = any(bool(graph.unresolved) for graph in graphs.values())
         unsupported_or_missing_graph = any(
@@ -219,7 +282,17 @@ async def analyze_repository(repository_url: str) -> dict[str, Any]:
             for project in projects
         )
         malformed_manifest = len(manifest_contents) < len(discovered["manifests"])
-        coverage_incomplete = unresolved_declarations or unresolved_graph_entries or unsupported_or_missing_graph or malformed_manifest or bool(orphaned_lockfiles)
+        orphan_inventory_incomplete = any(
+            orphan.path not in orphan_graph_paths
+            for orphan in orphaned_lockfiles
+        )
+        coverage_incomplete = (
+            unresolved_declarations
+            or unresolved_graph_entries
+            or unsupported_or_missing_graph
+            or malformed_manifest
+            or orphan_inventory_incomplete
+        )
         vulnerability_status = "not_started"
         vulnerabilities: list[dict[str, Any]] = []
         scan_complete = False
