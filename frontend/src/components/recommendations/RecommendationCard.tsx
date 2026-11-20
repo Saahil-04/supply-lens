@@ -1,6 +1,7 @@
 import { ArrowRight, ShieldAlert, Sparkles } from 'lucide-react'
 import type { Recommendation } from '../../api'
 import { n } from '../../lib/format'
+import { PriorityBadge } from '../ui/PriorityBadge'
 
 export function RecommendationCard({ r }: { r: Recommendation }) {
   return (
@@ -13,6 +14,7 @@ export function RecommendationCard({ r }: { r: Recommendation }) {
           <h3>{r.package_name || 'Package update'}</h3>
           <span className="version-code">{String(r.installed_version || 'current version')}</span>
           <ArrowRight size={14} />
+          <PriorityBadge priority={r.priority} />
           <span className="fix-version">
             {r.fixed_versions?.length ? r.fixed_versions.join(', ') : 'No fixed version listed'}
           </span>

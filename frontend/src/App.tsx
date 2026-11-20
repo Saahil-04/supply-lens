@@ -57,6 +57,8 @@ export default function App() {
               analysisId={session.analysisId}
               repositoryUrl={session.repositoryUrl}
               onUrlChange={session.setRepositoryUrl}
+              includeReachability={session.includeReachability}
+              onIncludeReachabilityChange={session.setIncludeReachability}
               onSubmit={session.runAnalysis}
               loading={session.loading}
               checking={session.checking}

@@ -3129,3 +3129,32 @@ tbody tr:hover {
 :root[data-theme='dark'] .graph-package-option:hover,
 :root[data-theme='dark'] .graph-package-option.is-active { background: rgba(111, 151, 255, .12); }
 :root[data-theme='dark'] .graph-package-option.is-selected { background: rgba(111, 151, 255, .18); }
+
+/* ---- Reachability and priority ---- */
+.pill-red { color: #c33244; background: #ffe5e8 }
+.priority-badge { display: inline-flex; padding: 4px 8px; border-radius: 5px; font-size: 10px; font-weight: 700; white-space: nowrap }
+.priority-1 { color: #c33244; background: #ffe5e8 }
+.priority-2 { color: #bc5a25; background: #ffeadc }
+.priority-3 { color: #a06a15; background: #fff1d1 }
+.priority-4 { color: #19815b; background: #e2f6eb }
+.priority-table { width: 100%; border-collapse: collapse; margin: 6px 0 12px; font-size: 11px }
+.priority-table th { text-align: left; font-size: 9px; color: #6e7a8e; padding: 4px 6px }
+.priority-table td { padding: 6px }
+.reach-breakdown { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px }
+.check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: #6d7789 }
+.detail-reason { margin: 6px 0 0; font-size: 11px; line-height: 1.5; color: #6d7789; white-space: pre-line }
+.diag-hint { margin-top: 2px; color: #6d5a33 }
+.diag-code { font-size: 9px; opacity: .65; font-family: ui-monospace, monospace }
+.notes-panel { margin-bottom: 15px; font-size: 11px }
+.notes-panel summary { cursor: pointer; display: flex; align-items: center; gap: 6px; color: #6d7789 }
+.notes-panel .warning-list { margin-top: 8px }
+.priority-panel { margin-bottom: 15px }
+
+:root[data-theme='dark'] .pill-red, :root[data-theme='dark'] .priority-1 { background: #3c222b; color: #ffb6c0 }
+:root[data-theme='dark'] .priority-2 { background: #3d2a1c; color: #ffc9a0 }
+:root[data-theme='dark'] .priority-3 { background: #382f20; color: #f3d49a }
+:root[data-theme='dark'] .priority-4 { background: #18372f; color: #8fe0bf }
+:root[data-theme='dark'] .check-row, :root[data-theme='dark'] .detail-reason, :root[data-theme='dark'] .diag-hint { color: var(--text-muted) }
+
+.unknown-reasons { margin: 0 0 12px; padding-left: 17px; font-size: 10px; line-height: 1.7; color: #6d7789 }
+:root[data-theme='dark'] .unknown-reasons { color: var(--text-muted) }

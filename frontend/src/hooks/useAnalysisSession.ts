@@ -16,6 +16,7 @@ export function useAnalysisSession({ onShowOverview }: { onShowOverview: () => v
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [includeReachability, setIncludeReachability] = useState(true)
   const [error, setError] = useState('')
   const [apiOnline, setApiOnline] = useState<boolean | null>(null)
 
@@ -64,7 +65,7 @@ export function useAnalysisSession({ onShowOverview }: { onShowOverview: () => v
       localStorage.setItem(storedUrlKey, url)
       const result = await request<Analysis>('/analyze', {
         method: 'POST',
-        body: JSON.stringify({ repository_url: url }),
+        body: JSON.stringify({ repository_url: url, include_reachability: includeReachability }),
       })
       setAnalysisId(result.analysis_id)
       localStorage.setItem(storedAnalysisKey, result.analysis_id)
@@ -88,6 +89,8 @@ export function useAnalysisSession({ onShowOverview }: { onShowOverview: () => v
   return {
     repositoryUrl,
     setRepositoryUrl,
+    includeReachability,
+    setIncludeReachability,
     analysisId,
     analysis,
     loading,

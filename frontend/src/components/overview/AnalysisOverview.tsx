@@ -2,6 +2,7 @@ import type { Analysis } from '../../api'
 import type { Tab } from '../../lib/tabs'
 import { CoveragePanel } from './CoveragePanel'
 import { MetricGrid } from './MetricGrid'
+import { PriorityPanel } from './PriorityPanel'
 import { QuickActions } from './QuickActions'
 import { RepoTitleRow } from './RepoTitleRow'
 import { StatusBanner } from './StatusBanner'
@@ -27,6 +28,7 @@ export function AnalysisOverview({
         <VulnerabilityPosturePanel analysis={analysis} onNavigate={onNavigate} />
         <CoveragePanel analysis={analysis} onNavigate={onNavigate} />
       </div>
+      <PriorityPanel analysis={analysis} onNavigate={onNavigate} />
       <WarningsPanel analysis={analysis} />
       <QuickActions onNavigate={onNavigate} />
     </>

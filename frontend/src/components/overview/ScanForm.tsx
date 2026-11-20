@@ -5,6 +5,8 @@ import { Github } from '../icons/Github'
 export function ScanForm({
   repositoryUrl,
   onUrlChange,
+  includeReachability,
+  onIncludeReachabilityChange,
   onSubmit,
   loading,
   apiOnline,
@@ -12,6 +14,8 @@ export function ScanForm({
 }: {
   repositoryUrl: string
   onUrlChange: (url: string) => void
+  includeReachability: boolean
+  onIncludeReachabilityChange: (value: boolean) => void
   onSubmit: (event: FormEvent) => void
   loading: boolean
   apiOnline: boolean | null
@@ -46,9 +50,18 @@ export function ScanForm({
             )}
           </button>
         </div>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={includeReachability}
+            onChange={(e) => onIncludeReachabilityChange(e.target.checked)}
+            disabled={loading}
+          />
+          Check whether vulnerable packages are actually imported (slower: downloads source files)
+        </label>
         <div className="field-hint">
-          <CircleHelp size={13} /> Public GitHub repositories · npm lockfiles supported for resolved dependency
-          graphs
+          <CircleHelp size={13} /> Public GitHub repositories · npm and pnpm lockfiles supported
+          {loading && ' · Large repositories can take a minute or more. Keep this tab open.'}
         </div>
       </div>
     </form>

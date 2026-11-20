@@ -12,6 +12,8 @@ export function OverviewView({
   analysisId,
   repositoryUrl,
   onUrlChange,
+  includeReachability,
+  onIncludeReachabilityChange,
   onSubmit,
   loading,
   checking,
@@ -27,6 +29,8 @@ export function OverviewView({
   analysisId: string
   repositoryUrl: string
   onUrlChange: (url: string) => void
+  includeReachability: boolean
+  onIncludeReachabilityChange: (value: boolean) => void
   onSubmit: (event: FormEvent) => void
   loading: boolean
   checking: boolean
@@ -56,6 +60,8 @@ export function OverviewView({
       <ScanForm
         repositoryUrl={repositoryUrl}
         onUrlChange={onUrlChange}
+        includeReachability={includeReachability}
+        onIncludeReachabilityChange={onIncludeReachabilityChange}
         onSubmit={onSubmit}
         loading={loading}
         apiOnline={apiOnline}

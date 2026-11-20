@@ -10,11 +10,21 @@ import { VulnerabilityModal } from '../components/vulnerabilities/VulnerabilityM
 import { VulnerabilityTable } from '../components/vulnerabilities/VulnerabilityTable'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']
+const REACHABILITY_OPTIONS = [
+  ['imported', 'Imported by your code'],
+  ['transitive_of_imported', 'Used via a dependency'],
+  ['tests_or_tooling_only', 'Tests / tooling only'],
+  ['dev_only', 'Dev dependency'],
+  ['not_imported', 'Not imported'],
+  ['unknown', 'Unknown'],
+]
 
 export function VulnerabilitiesView({ id, onError }: { id: string; onError: (e: string) => void }) {
   const [query, setQuery] = useState('')
   const [severity, setSeverity] = useState('')
   const [hasFix, setHasFix] = useState('')
+  const [reachability, setReachability] = useState('')
+  const [sort, setSort] = useState('priority')
   const [selected, setSelected] = useState<Vulnerability | null>(null)
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -24,8 +34,10 @@ export function VulnerabilitiesView({ id, onError }: { id: string; onError: (e: 
       qs({
         severity: severity || undefined,
         has_fix: hasFix === '' ? undefined : hasFix === 'true',
+        reachability: reachability || undefined,
+        sort,
       }),
-    [severity, hasFix],
+    [severity, hasFix, reachability, sort],
   )
   const q = useResource<Vulnerability>(id, 'vulnerabilities', query, extra)
   const items = q.page?.items || []
@@ -53,7 +65,7 @@ export function VulnerabilitiesView({ id, onError }: { id: string; onError: (e: 
       <ResourceHeader
         eyebrow="SECURITY FINDINGS"
         title="Vulnerabilities"
-        body="OSV advisory findings mapped to installed package instances. A finding does not by itself prove runtime exploitability."
+        body="OSV advisory findings mapped to installed package instances, ranked by priority (severity adjusted for whether the package is actually used). A finding does not by itself prove runtime exploitability."
         total={q.page?.pagination.total}
       />
       <div className="toolbar">
@@ -70,6 +82,18 @@ export function VulnerabilitiesView({ id, onError }: { id: string; onError: (e: 
           <option value="">Fix availability</option>
           <option value="true">Fix available</option>
           <option value="false">No known fix</option>
+        </select>
+        <select className="filter-select" value={reachability} onChange={(e) => setReachability(e.target.value)}>
+          <option value="">All usage states</option>
+          {REACHABILITY_OPTIONS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="priority">Sort: priority</option>
+          <option value="severity">Sort: severity</option>
         </select>
       </div>
 
