@@ -1,6 +1,7 @@
 """SupplyLens HTTP API: compact analysis creation and paginated result resources."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -8,24 +9,59 @@ from datetime import timezone
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.analysis.service import analyze_repository
 from app.analysis.store import AnalysisEntry, analysis_store
+from app.errors import AnalysisError
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="SupplyLens API",
     description="Repository-wide JavaScript/TypeScript dependency and supply-chain risk analysis",
-    version="0.5.0",
+    version="0.6.0",
 )
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://supply-lens-eight.vercel.app"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Each analysis makes dozens of GitHub + OSV calls. Cap concurrency so a burst of requests
+# cannot exhaust the shared GitHub rate limit; excess callers get a clear, retryable 503.
+MAX_CONCURRENT_ANALYSES = 4
+_analysis_slots = asyncio.Semaphore(MAX_CONCURRENT_ANALYSES)
+SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+
+
+def _error_response(status: int, code: str, message: str, *, hint: str | None = None, retryable: bool = False,
+                    details: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> JSONResponse:
+    """Uniform error body. ``detail`` is kept (older clients read it); ``error`` is the stable contract."""
+    return JSONResponse(
+        status_code=status,
+        content={"detail": message, "error": {"code": code, "message": message, "hint": hint, "retryable": retryable, "details": details or {}}},
+        headers=headers,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    code = {404: "NOT_FOUND", 410: "GONE"}.get(exc.status_code, f"HTTP_{exc.status_code}")
+    return _error_response(exc.status_code, code, str(exc.detail), headers=getattr(exc, "headers", None))
 
 
 class AnalyzeRequest(BaseModel):
     repository_url: str = Field(min_length=1, max_length=2048, examples=["https://github.com/owner/repo"])
+    # Downloads project source files to check which vulnerable packages are actually imported.
+    include_reachability: bool = True
 
 
 def _timestamp(value):
@@ -55,8 +91,10 @@ def _compact(entry: AnalysisEntry) -> dict[str, Any]:
         "repository": result.get("repository", {}),
         "summary": result.get("summary", {}),
         "analysis_metadata": result.get("analysis_metadata", {}),
+        "diagnostics_summary": metadata.get("diagnostics_summary", {}),
         "links": {
             "self": f"/analyses/{entry.analysis_id}",
+            "diagnostics": f"/analyses/{entry.analysis_id}/diagnostics",
             "projects": f"/analyses/{entry.analysis_id}/projects",
             "packages": f"/analyses/{entry.analysis_id}/packages",
             "vulnerabilities": f"/analyses/{entry.analysis_id}/vulnerabilities",
@@ -111,6 +149,17 @@ def _compact_vulnerability(item: dict[str, Any], analysis_id: str) -> dict[str, 
         "package_path": item.get("package_path"),
         "lockfile": item.get("lockfile"),
         "fixed_versions": item.get("fixed_versions", []),
+        "is_direct": item.get("is_direct"),
+        "reachability": item.get("reachability"),
+        "priority": item.get("priority"),
+        "priority_label": item.get("priority_label"),
+        "priority_reason": item.get("priority_reason"),
+        "baseline_priority": item.get("baseline_priority"),
+        "is_dev": item.get("is_dev"),
+        "is_malware": item.get("is_malware", False),
+        "introduced_via": item.get("introduced_via", []),
+        "direct_projects": item.get("direct_projects", []),
+        "details_unavailable": item.get("details_unavailable", False),
         "modified": item.get("modified"),
         "published": item.get("published"),
         "links": {"detail": f"/analyses/{analysis_id}/vulnerabilities/{_finding_id(item)}"},
@@ -125,28 +174,39 @@ async def health_check():
 @app.post("/analyze", status_code=201)
 async def analyze_repository_endpoint(request: AnalyzeRequest):
     """Run a scan and return a compact handle; large resources are fetched separately."""
-    try:
-        result = await analyze_repository(request.repository_url)
-        entry = analysis_store.create(result)
-        return _compact(entry)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="A GitHub or OSV API request timed out; retry the analysis") from exc
-    except httpx.HTTPStatusError as exc:
-        status = exc.response.status_code
-        if status in {403, 429}:
-            raise HTTPException(status_code=503, detail="GitHub or OSV API rate limit/access restriction encountered; try again later") from exc
-        if status == 404:
-            raise HTTPException(status_code=404, detail="GitHub repository, branch, file, or OSV advisory was not found") from exc
-        if status == 401:
-            raise HTTPException(status_code=502, detail="An upstream API rejected the configured credentials") from exc
-        raise HTTPException(status_code=502, detail="An upstream API request failed") from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail="Could not communicate with GitHub or OSV API") from exc
-    except Exception as exc:
-        logger.exception("Unexpected repository analysis failure")
-        raise HTTPException(status_code=500, detail="Unexpected repository analysis failure; check server logs") from exc
+    if _analysis_slots.locked():
+        return _error_response(
+            503, "SERVER_BUSY", "The server is already running the maximum number of analyses.",
+            hint="Wait a few seconds and submit again.", retryable=True, headers={"Retry-After": "10"},
+        )
+    async with _analysis_slots:
+        try:
+            # Pass the option only when turned off, so the default call shape is unchanged.
+            result = await (analyze_repository(request.repository_url) if request.include_reachability
+                            else analyze_repository(request.repository_url, include_reachability=False))
+            entry = analysis_store.create(result)
+            return _compact(entry)
+        except AnalysisError as exc:
+            headers = {"Retry-After": str(exc.details["retry_in_seconds"])} if exc.status_code == 429 and exc.details.get("retry_in_seconds") else None
+            return _error_response(exc.status_code, exc.code, exc.message, hint=exc.hint, retryable=exc.retryable, details=exc.details, headers=headers)
+        except ValueError as exc:
+            return _error_response(422, "ANALYSIS_FAILED", str(exc))
+        except httpx.TimeoutException:
+            return _error_response(504, "UPSTREAM_TIMEOUT", "A GitHub or OSV API request timed out; retry the analysis", retryable=True)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in {403, 429}:
+                return _error_response(503, "UPSTREAM_RATE_LIMITED", "GitHub or OSV API rate limit/access restriction encountered; try again later", retryable=True)
+            if status == 404:
+                return _error_response(404, "UPSTREAM_NOT_FOUND", "GitHub repository, branch, file, or OSV advisory was not found")
+            if status == 401:
+                return _error_response(502, "UPSTREAM_AUTH_FAILED", "An upstream API rejected the configured credentials")
+            return _error_response(502, "UPSTREAM_ERROR", "An upstream API request failed", retryable=True)
+        except httpx.HTTPError:
+            return _error_response(502, "UPSTREAM_UNREACHABLE", "Could not communicate with GitHub or OSV API", retryable=True)
+        except Exception:
+            logger.exception("Unexpected repository analysis failure")
+            return _error_response(500, "INTERNAL_ERROR", "Unexpected repository analysis failure; check server logs")
 
 
 @app.get("/analyses/{analysis_id}")
@@ -177,9 +237,12 @@ async def get_packages(
     direct: bool | None = None,
     is_dev: bool | None = None,
     lockfile: str | None = Query(None, max_length=500),
+    source: str | None = Query(None, pattern="^(registry|workspace|git|file|tarball)$"),
 ):
     entry = _entry_or_404(analysis_id)
     items = _get_list(entry, "packages")
+    if source:
+        items = [item for item in items if item.get("source", "registry") == source]
     if q:
         items = [item for item in items if _contains(item, q, ("name", "version", "path", "id"))]
     if direct is not None:
@@ -188,7 +251,7 @@ async def get_packages(
         items = [item for item in items if item.get("is_dev") is is_dev]
     if lockfile:
         items = [item for item in items if item.get("lockfile") == lockfile]
-    return _page(items, offset, limit, {"q": q, "direct": direct, "is_dev": is_dev, "lockfile": lockfile})
+    return _page(items, offset, limit, {"q": q, "direct": direct, "is_dev": is_dev, "lockfile": lockfile, "source": source})
 
 
 @app.get("/analyses/{analysis_id}/vulnerabilities")
@@ -200,9 +263,16 @@ async def get_vulnerabilities(
     severity: str | None = Query(None, pattern="^(CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)$"),
     package_name: str | None = Query(None, max_length=500),
     has_fix: bool | None = None,
+    direct: bool | None = None,
+    reachability: str | None = Query(None, pattern="^(imported|transitive_of_imported|tests_or_tooling_only|dev_only|not_imported|unknown)$"),
+    sort: str = Query("severity", pattern="^(severity|priority)$"),
 ):
     entry = _entry_or_404(analysis_id)
-    items = _get_list(entry, "vulnerabilities")
+    items = list(_get_list(entry, "vulnerabilities"))
+    if direct is not None:
+        items = [item for item in items if bool(item.get("is_direct")) is direct]
+    if reachability:
+        items = [item for item in items if (item.get("reachability") or {}).get("status") == reachability]
     if q:
         items = [item for item in items if _contains(item, q, ("id", "summary", "package_name", "package_path", "aliases"))]
     if severity:
@@ -211,13 +281,19 @@ async def get_vulnerabilities(
         items = [item for item in items if package_name.casefold() in str(item.get("package_name", "")).casefold()]
     if has_fix is not None:
         items = [item for item in items if bool(item.get("fixed_versions")) is has_fix]
-    items.sort(key=lambda item: (-(float(item.get("cvss_score") or 0)), {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(str(item.get("severity", "UNKNOWN")).upper(), 4), str(item.get("package_name", "")), str(item.get("id", ""))))
+    # Severity first (the label is authoritative), then numeric score, then a stable tie-break.
+    # Sorting by score first would rank a CRITICAL advisory with no score below a scored MEDIUM.
+    if sort == "priority":
+        # Context-aware order: priority level, then severity, then score.
+        items.sort(key=lambda item: (item.get("priority") or 9, SEVERITY_RANK.get(str(item.get("severity", "UNKNOWN")).upper(), 4), -(float(item.get("cvss_score") or 0)), str(item.get("package_name", "")), str(item.get("id", ""))))
+    else:
+        items.sort(key=lambda item: (SEVERITY_RANK.get(str(item.get("severity", "UNKNOWN")).upper(), 4), -(float(item.get("cvss_score") or 0)), str(item.get("package_name", "")), str(item.get("id", ""))))
     compact_items = [_compact_vulnerability(item, analysis_id) for item in items[offset:offset + limit]]
     total = len(items)
     return {
         "items": compact_items,
         "pagination": {"offset": offset, "limit": limit, "total": total, "has_more": offset + limit < total},
-        "filters": {"q": q, "severity": severity, "package_name": package_name, "has_fix": has_fix},
+        "filters": {"q": q, "severity": severity, "package_name": package_name, "has_fix": has_fix, "direct": direct, "reachability": reachability, "sort": sort},
     }
 
 
@@ -225,10 +301,37 @@ async def get_vulnerabilities(
 async def get_vulnerability_detail(analysis_id: str, finding_id: str):
     """Return the full advisory details for one specific affected package instance."""
     entry = _entry_or_404(analysis_id)
-    for item in _get_list(entry, "vulnerabilities"):
-        if _finding_id(item) == finding_id:
-            return {"finding_id": finding_id, **item}
-    raise HTTPException(status_code=404, detail="Vulnerability finding not found in this analysis")
+    index = entry.cache.get("finding_index")
+    if index is None:      # built once per analysis instead of hashing every finding per request
+        index = {_finding_id(item): item for item in _get_list(entry, "vulnerabilities")}
+        entry.cache["finding_index"] = index
+    item = index.get(finding_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Vulnerability finding not found in this analysis")
+    return {"finding_id": finding_id, **item}
+
+
+@app.get("/analyses/{analysis_id}/diagnostics")
+async def get_diagnostics(
+    analysis_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    severity: str | None = Query(None, pattern="^(error|warning|info)$"),
+    code: str | None = Query(None, max_length=100),
+):
+    """Everything that limited this analysis: unparsable files, unresolved dependencies, failed lookups."""
+    entry = _entry_or_404(analysis_id)
+    metadata = entry.result.get("analysis_metadata", {})
+    items = [d for d in metadata.get("diagnostics", []) if isinstance(d, dict)]
+    if severity:
+        items = [d for d in items if d.get("severity") == severity]
+    if code:
+        items = [d for d in items if d.get("code") == code]
+    page = _page(items, offset, limit, {"severity": severity, "code": code})
+    page["summary"] = metadata.get("diagnostics_summary", {})
+    page["lockfiles"] = metadata.get("lockfiles", [])
+    page["coverage"] = metadata.get("coverage", {})
+    return page
 
 
 @app.get("/analyses/{analysis_id}/recommendations")
@@ -248,45 +351,64 @@ async def get_recommendations(
     return _page(items, offset, limit, {"q": q, "has_fix": has_fix})
 
 
+MAX_GRAPH_NODES = 400
+
+
+def _graph_index(entry: AnalysisEntry) -> tuple[dict[str, dict[str, Any]], dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    """Node lookup + adjacency lists, built once per analysis (previously rebuilt on every request)."""
+    cached = entry.cache.get("graph_index")
+    if cached is not None:
+        return cached
+    graph = entry.result.get("dependency_graph") or {}
+    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
+    edges = graph.get("edges", []) if isinstance(graph, dict) else []
+    node_by_id = {node.get("id"): node for node in nodes if isinstance(node, dict) and node.get("id")}
+    outgoing: dict[str, list[dict[str, Any]]] = {}
+    incoming: dict[str, list[dict[str, Any]]] = {}
+    for edge in edges:
+        if isinstance(edge, dict):
+            outgoing.setdefault(edge.get("source"), []).append(edge)
+            incoming.setdefault(edge.get("target"), []).append(edge)
+    entry.cache["graph_index"] = (node_by_id, outgoing, incoming)
+    return entry.cache["graph_index"]
+
+
 @app.get("/analyses/{analysis_id}/graph")
 async def get_graph_neighborhood(
     analysis_id: str,
     package_id: str,
     depth: int = Query(1, ge=0, le=3),
     direction: str = Query("both", pattern="^(in|out|both)$"),
+    max_nodes: int = Query(MAX_GRAPH_NODES, ge=1, le=2000),
 ):
     """Return a bounded neighborhood around one package ID, not the entire large graph."""
     entry = _entry_or_404(analysis_id)
-    graph = entry.result.get("dependency_graph") or {}
-    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
-    edges = graph.get("edges", []) if isinstance(graph, dict) else []
-    node_by_id = {node.get("id"): node for node in nodes if isinstance(node, dict) and node.get("id")}
+    node_by_id, outgoing, incoming = _graph_index(entry)
     if package_id not in node_by_id:
         raise HTTPException(status_code=404, detail="Package ID not found in this analysis")
-    outgoing: dict[str, list[dict[str, Any]]] = {}
-    incoming: dict[str, list[dict[str, Any]]] = {}
-    for edge in edges:
-        if not isinstance(edge, dict):
-            continue
-        outgoing.setdefault(edge.get("source"), []).append(edge)
-        incoming.setdefault(edge.get("target"), []).append(edge)
     visited = {package_id}
     frontier = {package_id}
     selected_edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+    truncated = False
     for _ in range(depth):
         next_frontier: set[str] = set()
-        for current in frontier:
+        for current in sorted(frontier):
             candidates = []
             if direction in ("out", "both"):
                 candidates.extend(outgoing.get(current, []))
             if direction in ("in", "both"):
                 candidates.extend(incoming.get(current, []))
             for edge in candidates:
-                selected_edges[(str(edge.get("source")), str(edge.get("target")), str(edge.get("dependency_type")))] = edge
                 other = edge.get("target") if edge.get("source") == current else edge.get("source")
-                if other in node_by_id and other not in visited:
+                if other not in node_by_id:
+                    continue
+                if other not in visited:
+                    if len(visited) >= max_nodes:
+                        truncated = True      # keep the neighborhood small; tell the client
+                        continue
                     visited.add(other)
                     next_frontier.add(other)
+                selected_edges[(str(edge.get("source")), str(edge.get("target")), str(edge.get("dependency_type")))] = edge
         frontier = next_frontier
     return {
         "root_package_id": package_id,
@@ -294,7 +416,7 @@ async def get_graph_neighborhood(
         "direction": direction,
         "nodes": [node_by_id[node_id] for node_id in sorted(visited)],
         "edges": [selected_edges[key] for key in sorted(selected_edges)],
-        "truncated": False,
+        "truncated": truncated,
     }
 
 

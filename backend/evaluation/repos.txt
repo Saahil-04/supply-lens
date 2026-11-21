@@ -1,0 +1,13 @@
+# One GitHub URL per line. Replace these with 8-10 real repos YOU have checked.
+# Selection rules (write them in your report so the sample is defensible):
+#   - has a committed package-lock.json or pnpm-lock.yaml (otherwise nothing can be analyzed)
+#   - mix of: small app, large app, library, monorepo; npm and pnpm; different ages
+#   - not selected because they "look vulnerable" (that biases the result)
+# Find candidates on GitHub with:  filename:pnpm-lock.yaml   or   filename:package-lock.json
+# https://github.com/OWNER/REPO
+https://github.com/gkampitakis/small-react-projects
+https://github.com/adrianhajdin/project_chat_application
+https://github.com/Saahil-04/strideco
+https://github.com/Saahil-04/NotesApp
+https://github.com/exclusiveabhi/react-job-portal
+https://github.com/Saahil-04/my-portfolio

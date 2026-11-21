@@ -7,7 +7,7 @@ Use a shared persistent store before deploying multiple workers or requiring dur
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Any
@@ -23,6 +23,8 @@ class AnalysisEntry:
     result: dict[str, Any]
     created_at: datetime
     expires_at: datetime
+    # Derived lookup structures (graph adjacency, finding index) built lazily per analysis.
+    cache: dict[str, Any] = field(default_factory=dict)
 
 
 class AnalysisStore:

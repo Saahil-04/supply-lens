@@ -64,13 +64,17 @@ def build_cyclonedx_sbom(
             "bom-ref": ref,
             "name": package["name"],
             "version": package["version"],
-            "purl": _package_purl(package["name"], package["version"]),
             "properties": [
                 {"name": "supplylens:package:path", "value": package["path"]},
                 {"name": "supplylens:package:lockfile", "value": package["lockfile"]},
                 {"name": "supplylens:package:is-direct", "value": str(bool(package.get("is_direct"))).lower()},
+                {"name": "supplylens:package:source", "value": str(package.get("source", "registry"))},
             ],
         }
+        if package.get("source", "registry") == "registry":
+            # A pkg:npm purl asserts "this is the npm registry release"; git/file/workspace
+            # packages are not, and claiming so would make scanners match the wrong advisories.
+            component["purl"] = _package_purl(package["name"], package["version"])
         if package.get("integrity"):
             component["properties"].append({"name": "supplylens:npm:integrity", "value": package["integrity"]})
         if package.get("resolved"):
@@ -92,7 +96,7 @@ def build_cyclonedx_sbom(
         "version": 1,
         "metadata": {
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "tools": {"components": [{"type": "application", "name": "SupplyLens", "version": "0.3.0"}]},
+            "tools": {"components": [{"type": "application", "name": "SupplyLens", "version": "0.6.0"}]},
             "component": {"type": "application", "bom-ref": root_ref, "name": str(repo_name)},
         },
         "components": components,

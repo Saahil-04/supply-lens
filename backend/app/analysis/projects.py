@@ -1,6 +1,6 @@
 from dataclasses import dataclass,field
+from fnmatch import fnmatchcase
 from typing import Any
-from pathlib import PurePosixPath
  
 
 @dataclass
@@ -59,36 +59,65 @@ def extract_workspace_patterns(
             
     return []
 
+def _segments(path: str) -> list[str]:
+    return [segment for segment in path.split("/") if segment and segment != "."]
+
+
+def _glob_segments(pattern: list[str], path: list[str]) -> bool:
+    """Match a directory against a workspace glob, segment by segment.
+
+    ``*``/``?``/``[]`` match within one segment; ``**`` matches any number of segments.
+    The match is anchored at both ends, unlike ``PurePath.match`` (right-anchored), which
+    wrongly treated ``apps/x/packages/foo`` as a member of ``packages/*``.
+    """
+    if not pattern:
+        return not path
+    head, rest = pattern[0], pattern[1:]
+    if head == "**":
+        return any(_glob_segments(rest, path[skip:]) for skip in range(len(path) + 1))
+    return bool(path) and fnmatchcase(path[0], head) and _glob_segments(rest, path[1:])
+
+
+def workspace_directory_matches(relative_directory: str, patterns: list[str]) -> bool:
+    """True when the directory is selected by the patterns (``!negations`` applied last)."""
+    target = _segments(relative_directory)
+    included = False
+    for raw in patterns:
+        negated = raw.startswith("!")
+        pattern = _segments(raw[1:] if negated else raw)
+        if not pattern or not _glob_segments(pattern, target):
+            continue
+        if negated:
+            return False
+        included = True
+    return included
+
+
 def resolve_workspace_members(
     workspace_root:NpmProject,
     manifest_paths:list[str],
 ) -> list[str]:
     members: list[str] = []
-    
+
     root = workspace_root.root_path
-    
+
     for manifest_path in manifest_paths:
         if manifest_path == workspace_root.manifest["path"]:
             continue
-        
+
         if root:
             prefix = f"{root}/"
             if not manifest_path.startswith(prefix):
                 continue
-            
+
             relative_path = manifest_path[len(prefix):]
         else:
-            relative_path = manifest_path    
-            
-        relative = PurePosixPath(relative_path)
-                
-        for pattern in workspace_root.workspace_patterns:
-            pattern_path = PurePosixPath(pattern) / "package.json"
-            
-            if relative.match(str(pattern_path)):
-                members.append(manifest_path)
-                break
-    return sorted(members)            
+            relative_path = manifest_path
+
+        relative_directory = relative_path.rsplit("/", 1)[0] if "/" in relative_path else ""
+        if relative_directory and workspace_directory_matches(relative_directory, workspace_root.workspace_patterns):
+            members.append(manifest_path)
+    return sorted(members)
 
 def build_npm_projects(
     dependency_files: dict[str, list[dict[str, str]]],
@@ -97,15 +126,27 @@ def build_npm_projects(
     manifests = dependency_files["manifests"]
     lockfiles = dependency_files["lockfiles"]
 
-    # npm-shrinkwrap.json takes precedence over package-lock.json in the same
-    # directory. Prefer supported npm lockfiles over yarn/pnpm files because
-    # this analyzer currently builds resolved graphs only from npm lockfiles.
-    priority = {"npm-shrinkwrap.json": 0, "package-lock.json": 1, "yarn.lock": 2, "pnpm-lock.yaml": 3}
+    # npm-shrinkwrap.json takes precedence over package-lock.json in the same directory.
+    # The manifest's ``packageManager`` field ("pnpm@9.1.0") is the strongest signal of which
+    # lockfile is authoritative when several exist; otherwise prefer lockfiles this analyzer
+    # can resolve (npm, pnpm) over yarn.
+    default_priority = {"npm-shrinkwrap.json": 0, "package-lock.json": 1, "pnpm-lock.yaml": 2, "yarn.lock": 3}
+    manager_files = {
+        "npm": ("npm-shrinkwrap.json", "package-lock.json"),
+        "pnpm": ("pnpm-lock.yaml",),
+        "yarn": ("yarn.lock",),
+    }
+    manifest_by_directory = {get_parent_directory(m["path"]): manifest_contents.get(m["path"], {}) for m in manifests}
+
+    def lockfile_rank(item: dict[str, str]) -> tuple[int, int]:
+        name = item["path"].rsplit("/", 1)[-1]
+        declared = manifest_by_directory.get(get_parent_directory(item["path"]), {}).get("packageManager")
+        manager = declared.split("@", 1)[0] if isinstance(declared, str) else None
+        preferred = 0 if name in manager_files.get(manager, ()) else 1
+        return preferred, default_priority.get(name, 99)
+
     lockfiles_by_directory: dict[str, dict[str, str]] = {}
-    for lockfile in sorted(
-        lockfiles,
-        key=lambda item: (get_parent_directory(item["path"]), priority.get(item["path"].rsplit("/", 1)[-1], 99)),
-    ):
+    for lockfile in sorted(lockfiles, key=lambda item: (get_parent_directory(item["path"]), lockfile_rank(item))):
         directory = get_parent_directory(lockfile["path"])
         lockfiles_by_directory.setdefault(directory, lockfile)
 

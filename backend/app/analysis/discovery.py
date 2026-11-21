@@ -15,7 +15,7 @@ LOCK_FILES = {
 
 def discover_dependency_files(
     tree: list[dict[str, Any]],
-) -> dict[str, list[dict[str, str]]]:
+) -> dict[str, list[dict[str, Any]]]:
     manifests: list[str] = []
     lockfiles: list[str] = []
 
@@ -24,6 +24,11 @@ def discover_dependency_files(
             continue
 
         path = entry.get("path", "")
+        # Committed node_modules (and VCS metadata) contain third-party manifests that are
+        # not projects of this repository; analyzing them would inflate projects and findings.
+        segments = path.split("/")
+        if "node_modules" in segments[:-1] or ".git" in segments[:-1]:
+            continue
         filename = path.rsplit("/", maxsplit=1)[-1]
         sha = entry.get("sha")
         
@@ -33,7 +38,9 @@ def discover_dependency_files(
         file_info = {
             "path": path,
             "sha": sha,
-        }        
+        }
+        if isinstance(entry.get("size"), int):
+            file_info["size"] = entry["size"]
 
         if filename in MANIFEST_FILES:
             manifests.append(file_info)
