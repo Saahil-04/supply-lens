@@ -1,85 +1,76 @@
-import { ChevronDown, PanelLeftClose, RefreshCw, ShieldCheck } from 'lucide-react'
+import { PanelLeftClose, RefreshCw, ShieldCheck } from 'lucide-react'
 import type { Analysis } from '../../api'
-import { n } from '../../lib/format'
-import { tabs, type Tab } from '../../lib/tabs'
+import { formatNumber } from '../../lib/format'
+import { TABS, type TabId } from '../../lib/tabs'
 import { Github } from '../icons/Github'
 
-export function Sidebar({
-  tab,
-  onTabChange,
-  analysis,
-  apiOnline,
-  onCheckApi,
-  onClose,
-}: {
-  tab: Tab
-  onTabChange: (tab: Tab) => void
+type Props = {
+  tab: TabId
+  onTabChange: (tab: TabId) => void
   analysis: Analysis | null
   apiOnline: boolean | null
   onCheckApi: () => void
   onClose: () => void
-}) {
+}
+
+const SERVICE_STATUS = {
+  true: { label: 'Service connected', className: 'online' },
+  false: { label: 'Service unreachable', className: 'offline' },
+  null: { label: 'Checking service…', className: '' },
+} as const
+
+export function Sidebar({ tab, onTabChange, analysis, apiOnline, onCheckApi, onClose }: Props) {
+  const findings = Number(analysis?.summary.vulnerabilities_found ?? 0)
+  const status = SERVICE_STATUS[String(apiOnline) as keyof typeof SERVICE_STATUS]
+  const repository = analysis?.repository
+
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <button className="icon-button sidebar-close" onClick={onClose} aria-label="Collapse sidebar" title="Collapse sidebar"><PanelLeftClose size={17} /></button>
-        <div className="brand-mark">
-          <ShieldCheck size={21} />
-        </div>
-        <div>
-          <div className="brand-name">SupplyLens</div>
-          <div className="brand-subtitle">SOFTWARE SUPPLY CHAIN</div>
-        </div>
+    <aside className="sidebar" aria-label="Primary">
+      <div className="sidebar-brand">
+        <span className="brand-mark">
+          <ShieldCheck size={20} aria-hidden="true" />
+        </span>
+        <span className="brand-name">SupplyLens</span>
+        <button type="button" className="icon-button sidebar-collapse" onClick={onClose} aria-label="Hide sidebar">
+          <PanelLeftClose size={18} />
+        </button>
       </div>
 
-      <div className="workspace-label">WORKSPACE</div>
-      <div className="repo-switcher">
-        <div className="repo-avatar">
+      <div className="sidebar-section">Repository</div>
+      <div className="repo-card">
+        <span className="repo-card-icon">
           <Github size={16} />
-        </div>
-        <div className="repo-switcher-text">
-          <b>{analysis?.repository?.name || 'Repository analysis'}</b>
-          <span>{analysis?.repository?.owner || 'GitHub repository'}</span>
-        </div>
-        <ChevronDown size={15} />
+        </span>
+        <span className="repo-card-text">
+          <b>{repository?.name ?? 'No repository yet'}</b>
+          <small>{repository?.owner ?? 'Analyze a repository to begin'}</small>
+        </span>
       </div>
 
-      <div className="nav-label">ANALYZE</div>
+      <div className="sidebar-section">Explore</div>
       <nav className="nav-list">
-        {tabs.map((item) => {
-          const Icon = item.icon
-          return (
-            <button
-              key={item.name}
-              className={`nav-item ${tab === item.name ? 'active' : ''}`}
-              onClick={() => onTabChange(item.name)}
-              disabled={!analysis && item.name !== 'Overview'}
-            >
-              <Icon size={17} />
-              <span>{item.name}</span>
-              {item.name === 'Vulnerabilities' &&
-                analysis &&
-                Number(analysis.summary.vulnerabilities_found) > 0 && (
-                  <span className="nav-count">{n(analysis.summary.vulnerabilities_found)}</span>
-                )}
-            </button>
-          )
-        })}
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            className={`nav-item ${tab === id ? 'is-active' : ''}`.trim()}
+            aria-current={tab === id ? 'page' : undefined}
+            disabled={!analysis && id !== 'overview'}
+            onClick={() => onTabChange(id)}
+          >
+            <Icon size={17} aria-hidden="true" />
+            <span>{label}</span>
+            {id === 'vulnerabilities' && findings > 0 && <span className="nav-count">{formatNumber(findings)}</span>}
+          </button>
+        ))}
       </nav>
 
-      <div className="sidebar-bottom">
-        <div className="api-status">
-          <span
-            className={`status-dot ${apiOnline === true ? 'online' : apiOnline === false ? 'offline' : ''}`}
-          />
-          <span>
-            API {apiOnline === true ? 'connected' : apiOnline === false ? 'unreachable' : 'checking'}
-          </span>
-          <button title="Check API again" onClick={onCheckApi}>
-            <RefreshCw size={13} />
-          </button>
-        </div>
-        <div className="version">SUPPLYLENS MVP · LOCAL</div>
+      <div className="sidebar-footer">
+        <span className={`status-dot ${status.className}`} aria-hidden="true" />
+        <span>{status.label}</span>
+        <button type="button" className="icon-button" onClick={onCheckApi} aria-label="Check service status" title="Check again">
+          <RefreshCw size={13} />
+        </button>
       </div>
     </aside>
   )

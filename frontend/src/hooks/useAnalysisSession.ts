@@ -1,45 +1,56 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { request, type Analysis } from '../api'
 import { errorText } from '../lib/format'
-import { storedAnalysisKey, storedUrlKey } from '../lib/storage'
+import { STORAGE_KEYS, storage } from '../lib/storage'
 
 const GITHUB_REPO_URL = /^https?:\/\/(www\.)?github\.com\/[\w.-]+\/[\w.-]+\/?$/
+const STALE_ANALYSIS = /not found|expired/i
 
 /**
- * Owns everything about the current scan: API health, the repository URL input,
- * the loaded analysis, and the actions that change them.
- * `onShowOverview` lets the host switch back to the Overview tab after a scan or reset.
+ * Owns everything about the current analysis: service health, the repository
+ * URL input, the loaded analysis, and the actions that change them.
+ * `onShowOverview` lets the host return to the Overview tab after a run or reset.
  */
 export function useAnalysisSession({ onShowOverview }: { onShowOverview: () => void }) {
-  const [repositoryUrl, setRepositoryUrl] = useState(() => localStorage.getItem(storedUrlKey) || '')
-  const [analysisId, setAnalysisId] = useState(() => localStorage.getItem(storedAnalysisKey) || '')
-  const [analysis, setAnalysis] = useState<Analysis | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [checking, setChecking] = useState(false)
+  const [initialId] = useState(() => storage.get(STORAGE_KEYS.analysisId) ?? '')
+  const [analysisId, setAnalysisId] = useState(initialId)
+  const [repositoryUrl, setRepositoryUrl] = useState(() => storage.get(STORAGE_KEYS.repositoryUrl) ?? '')
   const [includeReachability, setIncludeReachability] = useState(true)
+  const [analysis, setAnalysis] = useState<Analysis | null>(null)
+  const [running, setRunning] = useState(false)
+  const [refreshing, setRefreshing] = useState(!!initialId)
   const [error, setError] = useState('')
   const [apiOnline, setApiOnline] = useState<boolean | null>(null)
 
-  const loadAnalysis = useCallback(async (id: string) => {
-    if (!id) return
-    setChecking(true)
-    try {
-      const result = await request<Analysis>(`/analyses/${encodeURIComponent(id)}`)
-      setAnalysis(result)
-      setError('')
-    } catch (e) {
-      setAnalysis(null)
-      setError(errorText(e))
-    } finally {
-      setChecking(false)
-    }
-  }, [])
+  const fetchAnalysis = useCallback(
+    (id: string) =>
+      request<Analysis>(`/analyses/${encodeURIComponent(id)}`)
+        .then((result) => {
+          setAnalysis(result)
+          setError('')
+        })
+        .catch((e) => {
+          setAnalysis(null)
+          setError(errorText(e))
+        })
+        .finally(() => setRefreshing(false)),
+    [],
+  )
+
+  const loadAnalysis = useCallback(
+    (id: string) => {
+      setRefreshing(true)
+      return fetchAnalysis(id)
+    },
+    [fetchAnalysis],
+  )
 
   const checkApi = useCallback(
     () =>
-      request<{ status: string }>('/health')
-        .then(() => setApiOnline(true))
-        .catch(() => setApiOnline(false)),
+      request('/health').then(
+        () => setApiOnline(true),
+        () => setApiOnline(false),
+      ),
     [],
   )
 
@@ -47,9 +58,10 @@ export function useAnalysisSession({ onShowOverview }: { onShowOverview: () => v
     void checkApi()
   }, [checkApi])
 
+  // Restore the last analysis once on load.
   useEffect(() => {
-    if (analysisId) void loadAnalysis(analysisId)
-  }, [analysisId, loadAnalysis])
+    if (initialId) void fetchAnalysis(initialId)
+  }, [initialId, fetchAnalysis])
 
   const runAnalysis = async (event: FormEvent) => {
     event.preventDefault()
@@ -58,49 +70,54 @@ export function useAnalysisSession({ onShowOverview }: { onShowOverview: () => v
       setError('Enter a GitHub repository URL, for example https://github.com/owner/repo')
       return
     }
-    setLoading(true)
+
+    setRunning(true)
     setError('')
     setAnalysis(null)
     try {
-      localStorage.setItem(storedUrlKey, url)
+      storage.set(STORAGE_KEYS.repositoryUrl, url)
       const result = await request<Analysis>('/analyze', {
         method: 'POST',
         body: JSON.stringify({ repository_url: url, include_reachability: includeReachability }),
       })
+      storage.set(STORAGE_KEYS.analysisId, result.analysis_id)
       setAnalysisId(result.analysis_id)
-      localStorage.setItem(storedAnalysisKey, result.analysis_id)
       setAnalysis(result)
       onShowOverview()
     } catch (e) {
       setError(errorText(e))
     } finally {
-      setLoading(false)
+      setRunning(false)
     }
   }
 
-  const forgetAnalysis = () => {
+  const closeAnalysis = () => {
+    storage.remove(STORAGE_KEYS.analysisId)
     setAnalysisId('')
     setAnalysis(null)
     setError('')
-    localStorage.removeItem(storedAnalysisKey)
     onShowOverview()
   }
 
   return {
+    analysis,
     repositoryUrl,
     setRepositoryUrl,
     includeReachability,
     setIncludeReachability,
-    analysisId,
-    analysis,
-    loading,
-    checking,
+    running,
+    refreshing,
     error,
+    dismissError: () => setError(''),
     setError,
+    /** The stored analysis is gone (expired or unknown to the service), so offer a fresh start. */
+    canStartOver: !!analysisId && STALE_ANALYSIS.test(error),
     apiOnline,
     checkApi,
-    loadAnalysis,
+    refresh: () => analysis && loadAnalysis(analysis.analysis_id),
     runAnalysis,
-    forgetAnalysis,
+    closeAnalysis,
   }
 }
+
+export type AnalysisSession = ReturnType<typeof useAnalysisSession>

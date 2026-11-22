@@ -1,0 +1,111 @@
+/* Design tokens. Every colour in the app comes from here, so dark mode is one override block. */
+
+:root {
+  color-scheme: light;
+
+  --font-sans: 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Surfaces */
+  --bg: #f6f7fa;
+  --surface: #ffffff;
+  --surface-muted: #f9fafb;
+  --surface-hover: #f2f4f7;
+  --border: #e4e7ec;
+  --border-strong: #d0d5dd;
+
+  /* Text */
+  --text: #101828;
+  --text-muted: #475467;
+  --text-subtle: #667085;
+
+  /* Accent */
+  --accent: #2a52c9;
+  --accent-solid: #2f5bdb;
+  --accent-solid-hover: #264fc4;
+  --accent-soft: #eef2ff;
+  --on-accent: #ffffff;
+
+  /* Tones: -bg / -fg for badges and alerts, -solid for fills and charts */
+  --neutral-bg: #f2f4f7;  --neutral-fg: #344054;  --neutral-solid: #98a2b3;
+  --info-bg: #eef2ff;     --info-fg: #2a45b8;     --info-solid: #4f6fe8;
+  --success-bg: #ecfdf3;  --success-fg: #067647;  --success-solid: #12b76a;
+  --warning-bg: #fffaeb;  --warning-fg: #b54708;  --warning-solid: #f79009;
+  --danger-bg: #fef3f2;   --danger-fg: #b42318;   --danger-solid: #f04438;
+  --critical-bg: #b42318; --critical-fg: #ffffff; --critical-solid: #b42318;
+  --violet-bg: #f4f3ff;   --violet-fg: #5925dc;   --violet-solid: #7a5af8;
+
+  /* Sidebar */
+  --sidebar-bg: #ffffff;
+  --sidebar-border: var(--border);
+  --sidebar-text: #475467;
+  --sidebar-text-strong: #101828;
+  --sidebar-section: #667085;
+  --sidebar-hover: #f2f4f7;
+  --sidebar-active: #eef2ff;
+  --sidebar-accent: #2a52c9;
+  --sidebar-badge-bg: #fef3f2;
+  --sidebar-badge-fg: #b42318;
+
+  /* Graph */
+  --graph-edge: #98a2b3;
+  --graph-grid: #e4e7ec;
+
+  /* Shape and depth */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.1);
+  --shadow-lg: -12px 0 40px rgba(16, 24, 40, 0.18);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent-solid) 28%, transparent);
+
+  --sidebar-width: 248px;
+  --topbar-height: 56px;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0e1422;
+  --surface: #151c2e;
+  --surface-muted: #1a2236;
+  --surface-hover: #1e2841;
+  --border: #263049;
+  --border-strong: #35425f;
+
+  --text: #e8ecf4;
+  --text-muted: #a3aec4;
+  --text-subtle: #8693ab;
+
+  --accent: #93a8ff;
+  --accent-solid: #4268e8;
+  --accent-solid-hover: #5576f0;
+  --accent-soft: #1d2a54;
+
+  --neutral-bg: #222b40;  --neutral-fg: #c0c9db;  --neutral-solid: #6b7790;
+  --info-bg: #1d2a54;     --info-fg: #b0bfff;     --info-solid: #6f8cff;
+  --success-bg: #0f2c21;  --success-fg: #62d89c;  --success-solid: #2fbf7f;
+  --warning-bg: #35260d;  --warning-fg: #f6b756;  --warning-solid: #f0a030;
+  --danger-bg: #3b1816;   --danger-fg: #ff9d94;   --danger-solid: #f0594f;
+  --critical-bg: #c0332a; --critical-fg: #ffffff; --critical-solid: #e5483e;
+  --violet-bg: #2a2150;   --violet-fg: #c5b8ff;   --violet-solid: #8f78f5;
+
+   --sidebar-bg: #090e1a;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-text: #98a5bb;
+  --sidebar-text-strong: #eef2fa;
+  --sidebar-section: #6b7a93;
+  --sidebar-hover: rgba(255, 255, 255, 0.05);
+  --sidebar-active: rgba(255, 255, 255, 0.09);
+  --sidebar-accent: #8fa5ff;
+  --sidebar-badge-bg: rgba(240, 68, 56, 0.2);
+  --sidebar-badge-fg: #ffb4ae;
+
+  --graph-edge: #5a6785;
+  --graph-grid: #1e2841;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: -12px 0 40px rgba(0, 0, 0, 0.55);
+}

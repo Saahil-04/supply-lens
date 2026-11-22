@@ -1,39 +1,42 @@
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { Page } from '../../api'
-import { n } from '../../lib/format'
+import { formatNumber } from '../../lib/format'
 
 export function Pagination({
   page,
   offset,
-  setOffset,
+  onOffsetChange,
 }: {
-  page: Page<unknown> | null
+  page?: Page<unknown>
   offset: number
-  setOffset: (n: number) => void
+  onOffsetChange: (offset: number) => void
 }) {
-  if (!page) return null
-  const p = page.pagination
+  if (!page || page.pagination.total === 0) return null
+  const { limit, total, has_more: hasMore } = page.pagination
+
   return (
-    <div className="pagination">
+    <nav className="pagination" aria-label="Pagination">
       <span>
-        Showing {p.total === 0 ? 0 : offset + 1}–{Math.min(offset + p.limit, p.total)} of {n(p.total)}
+        Showing {formatNumber(offset + 1)}–{formatNumber(Math.min(offset + limit, total))} of {formatNumber(total)}
       </span>
-      <div>
+      <div className="pagination-buttons">
         <button
-          className="button button-secondary button-small"
+          type="button"
+          className="btn btn-secondary btn-sm"
           disabled={offset === 0}
-          onClick={() => setOffset(Math.max(0, offset - p.limit))}
+          onClick={() => onOffsetChange(Math.max(0, offset - limit))}
         >
-          <ArrowLeft size={14} /> Previous
+          <ChevronLeft size={14} /> Previous
         </button>
         <button
-          className="button button-secondary button-small"
-          disabled={!p.has_more}
-          onClick={() => setOffset(offset + p.limit)}
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={!hasMore}
+          onClick={() => onOffsetChange(offset + limit)}
         >
-          Next <ArrowRight size={14} />
+          Next <ChevronRight size={14} />
         </button>
       </div>
-    </div>
+    </nav>
   )
 }

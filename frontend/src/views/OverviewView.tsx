@@ -1,85 +1,71 @@
-import type { FormEvent } from 'react'
-import { LoaderCircle, RefreshCw } from 'lucide-react'
-import type { Analysis } from '../api'
-import type { Tab } from '../lib/tabs'
-import { ErrorAlert } from '../components/ui/ErrorAlert'
+import { LoadingState } from '../components/ui/LoadingState'
+import { Alert } from '../components/ui/Alert'
+import { Panel } from '../components/ui/Panel'
 import { AnalysisOverview } from '../components/overview/AnalysisOverview'
-import { ScanForm } from '../components/overview/ScanForm'
-import { WelcomePanel } from '../components/overview/WelcomePanel'
+import { AnalyzeForm } from '../components/overview/AnalyzeForm'
+import { Landing } from '../components/overview/Landing'
+import type { AnalysisSession } from '../hooks/useAnalysisSession'
+import { downloadSbom } from '../lib/downloadSbom'
+import { errorText } from '../lib/format'
+import type { TabId } from '../lib/tabs'
 
-export function OverviewView({
-  analysis,
-  analysisId,
-  repositoryUrl,
-  onUrlChange,
-  includeReachability,
-  onIncludeReachabilityChange,
-  onSubmit,
-  loading,
-  checking,
-  apiOnline,
-  error,
-  onDismissError,
-  onRefresh,
-  onForget,
-  onNavigate,
-  onDownload,
-}: {
-  analysis: Analysis | null
-  analysisId: string
-  repositoryUrl: string
-  onUrlChange: (url: string) => void
-  includeReachability: boolean
-  onIncludeReachabilityChange: (value: boolean) => void
-  onSubmit: (event: FormEvent) => void
-  loading: boolean
-  checking: boolean
-  apiOnline: boolean | null
-  error: string
-  onDismissError: () => void
-  onRefresh: () => void
-  onForget: () => void
-  onNavigate: (tab: Tab) => void
-  onDownload: () => void
-}) {
+export function OverviewView({ session, onNavigate }: { session: AnalysisSession; onNavigate: (tab: TabId) => void }) {
+  const { analysis, error } = session
+
+  const formProps = {
+    url: session.repositoryUrl,
+    onUrlChange: session.setRepositoryUrl,
+    includeReachability: session.includeReachability,
+    onIncludeReachabilityChange: session.setIncludeReachability,
+    onSubmit: session.runAnalysis,
+    running: session.running,
+    disabled: session.apiOnline === false,
+  }
+
+  const errorAlert = error && (
+    <Alert
+      tone="error"
+      title="We couldn’t complete that request"
+      onDismiss={session.dismissError}
+      action={
+        session.canStartOver && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={session.closeAnalysis}>
+            Start a new analysis
+          </button>
+        )
+      }
+    >
+      {error}
+    </Alert>
+  )
+
+  // Restoring the previous analysis on load: avoid flashing the landing screen.
+  if (!analysis && session.refreshing) {
+    return <LoadingState>Loading your last analysis…</LoadingState>
+  }
+
+  if (!analysis) {
+    return (
+      <>
+        {errorAlert}
+        <Landing {...formProps} />
+      </>
+    )
+  }
+
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">SECURITY POSTURE</div>
-          <h1>Repository overview</h1>
-          <p>Understand dependency inventory, known vulnerabilities, and remediation priorities.</p>
-        </div>
-        {analysis && (
-          <button className="button button-secondary" onClick={onRefresh} disabled={checking}>
-            {checking ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />} Refresh summary
-          </button>
-        )}
-      </div>
-
-      <ScanForm
-        repositoryUrl={repositoryUrl}
-        onUrlChange={onUrlChange}
-        includeReachability={includeReachability}
-        onIncludeReachabilityChange={onIncludeReachabilityChange}
-        onSubmit={onSubmit}
-        loading={loading}
-        apiOnline={apiOnline}
-        hasAnalysis={!!analysis}
+      {errorAlert}
+      <Panel className="analyze-panel">
+        <AnalyzeForm {...formProps} hasAnalysis />
+      </Panel>
+      <AnalysisOverview
+        analysis={analysis}
+        refreshing={session.refreshing}
+        onRefresh={() => void session.refresh()}
+        onDownload={() => downloadSbom(analysis.analysis_id).catch((e) => session.setError(errorText(e)))}
+        onNavigate={onNavigate}
       />
-
-      {error && (
-        <ErrorAlert
-          message={error}
-          canRestart={!!analysisId}
-          onRestart={onForget}
-          onDismiss={onDismissError}
-        />
-      )}
-
-      {!analysis && <WelcomePanel />}
-
-      {analysis && <AnalysisOverview analysis={analysis} onNavigate={onNavigate} onDownload={onDownload} />}
     </>
   )
 }

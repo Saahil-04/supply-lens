@@ -1,75 +1,50 @@
-# React + TypeScript + Vite
+# SupplyLens frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Web client for SupplyLens: analyze a GitHub repository's npm dependencies, review known vulnerabilities by priority, explore the dependency graph, and export a CycloneDX SBOM.
 
-Currently, two official plugins are available:
+Built with React 19, TypeScript and Vite.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Getting started
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+npm run dev        # http://localhost:5173
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+| Script            | Purpose                                  |
+| ----------------- | ---------------------------------------- |
+| `npm run dev`     | Start the dev server                     |
+| `npm run build`   | Typecheck and create a production build  |
+| `npm run preview` | Serve the production build locally       |
+| `npm run lint`    | Run ESLint                               |
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Configuration
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+| Variable            | Description                                                              |
+| ------------------- | ------------------------------------------------------------------------ |
+| `VITE_API_BASE_URL` | Base URL of the SupplyLens API. Defaults to `/api` (proxied by Vite in development). |
+
+Copy `.env.example` to `.env` to override it.
+
+## Project structure
 
 ```
+src/
+  api.ts            API types, HTTP client and ApiError
+  App.tsx           Shell: sidebar, topbar, tab routing
+  views/            One component per tab (Overview, Projects, Packages, …)
+  components/
+    layout/         Sidebar, Topbar, PageFooter
+    ui/             Shared primitives (Panel, Badge, Alert, Drawer, DataPanel, …)
+    overview/ graph/ packages/ projects/ recommendations/ vulnerabilities/
+  hooks/            useApi, useResource, useAnalysisSession, useViewport, useTheme, …
+  lib/              Formatting, vocabulary (priorities, severities), graph layout model
+  styles/           tokens.css (light/dark design tokens) plus one stylesheet per area
+```
+
+## Conventions
+
+- **One source of truth for colour.** All colours are CSS variables in `styles/tokens.css`; dark mode only overrides those variables.
+- **Data fetching** goes through `useApi` (abortable GET) or `useResource` (paginated, searchable, filterable list). Views do not call `fetch` directly.
+- **Routing** is hash-based (`#/vulnerabilities`) so refresh and back/forward work without server configuration.
+- **Graph layout** is computed in `lib/graph.ts` (pure, no React); `useViewport` owns pan/zoom; `GraphCanvas` only draws.

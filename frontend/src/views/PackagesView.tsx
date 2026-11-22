@@ -1,53 +1,55 @@
-import { useMemo, useState } from 'react'
-import { qs, type PackageItem, type Page } from '../api'
+import { useState } from 'react'
+import type { PackageItem } from '../api'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useResource } from '../hooks/useResource'
+import { triState, withDefault } from '../lib/filters'
 import { PackagesTable } from '../components/packages/PackagesTable'
-import { Pagination } from '../components/ui/Pagination'
-import { ResourceHeader } from '../components/ui/ResourceHeader'
-import { SearchBox } from '../components/ui/SearchBox'
-import { TableState } from '../components/ui/TableState'
+import { DataPanel } from '../components/ui/DataPanel'
+import { FilterBar } from '../components/ui/FilterBar'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Select } from '../components/ui/Select'
+
+const TYPE_OPTIONS = withDefault('All dependency types', [
+  { value: 'true', label: 'Direct only' },
+  { value: 'false', label: 'Transitive only' },
+])
+const SCOPE_OPTIONS = withDefault('All scopes', [
+  { value: 'true', label: 'Development' },
+  { value: 'false', label: 'Non-development' },
+])
 
 export function PackagesView({ id }: { id: string }) {
-  const [query, setQuery] = useState('')
+  const [search, setSearch] = useState('')
   const [direct, setDirect] = useState('')
   const [dev, setDev] = useState('')
-  const extra = useMemo(
-    () =>
-      qs({
-        direct: direct === '' ? undefined : direct === 'true',
-        is_dev: dev === '' ? undefined : dev === 'true',
-      }),
-    [direct, dev],
-  )
-  const q = useResource<PackageItem>(id, 'packages', query, extra)
-  const items = q.page?.items || []
+
+  const resource = useResource<PackageItem>(id, 'packages', {
+    query: useDebouncedValue(search),
+    filters: { direct: triState(direct), is_dev: triState(dev) },
+  })
 
   return (
     <>
-      <ResourceHeader
-        eyebrow="INVENTORY"
+      <PageHeader
         title="Packages"
-        body="Search resolved package instances across project lockfiles. Identical versions in different lockfiles remain separate instances."
-        total={q.page?.pagination.total}
+        description="Resolved package instances across project lockfiles. The same version in different lockfiles is listed separately."
+        total={resource.total}
       />
-      <div className="toolbar">
-        <SearchBox value={query} onChange={setQuery} placeholder="Search package, version, or path…" />
-        <select className="filter-select" value={direct} onChange={(e) => setDirect(e.target.value)}>
-          <option value="">All dependency types</option>
-          <option value="true">Direct only</option>
-          <option value="false">Transitive only</option>
-        </select>
-        <select className="filter-select" value={dev} onChange={(e) => setDev(e.target.value)}>
-          <option value="">All scopes</option>
-          <option value="true">Development</option>
-          <option value="false">Non-development</option>
-        </select>
-      </div>
-      <div className="table-card">
-        <TableState loading={q.loading} error={q.error} empty={!q.loading && !q.error && items.length === 0} />
-        {items.length > 0 && <PackagesTable items={items} />}
-      </div>
-      <Pagination page={q.page as Page<unknown> | null} offset={q.offset} setOffset={q.setOffset} />
+      <FilterBar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search package, version or path…"
+        isFiltered={!!(search || direct || dev)}
+        onReset={() => {
+          setSearch('')
+          setDirect('')
+          setDev('')
+        }}
+      >
+        <Select label="Dependency type" value={direct} onChange={setDirect} options={TYPE_OPTIONS} />
+        <Select label="Scope" value={dev} onChange={setDev} options={SCOPE_OPTIONS} />
+      </FilterBar>
+      <DataPanel resource={resource}>{(items) => <PackagesTable items={items} />}</DataPanel>
     </>
   )
 }

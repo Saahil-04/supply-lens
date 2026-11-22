@@ -1,43 +1,39 @@
-import { useEffect, useState } from 'react'
-import { qs, request, type Page } from '../api'
-import { errorText } from '../lib/format'
+import { useCallback, useState } from 'react'
+import { qs, type Page } from '../api'
+import { useApi } from './useApi'
 
-/** Paginated, searchable, filterable fetch of `/analyses/:id/:path`. */
-export function useResource<T>(id: string, path: string, query: string, extra = '') {
-  const [page, setPage] = useState<Page<T> | null>(null)
-  const [offset, setOffset] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+export const PAGE_SIZE = 25
 
-  useEffect(() => {
-    setOffset(0)
-  }, [query, extra, id])
+type FilterValues = Record<string, string | number | boolean | undefined | null>
 
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError('')
-    request<Page<T>>(
-      `/analyses/${encodeURIComponent(id)}/${path}?${qs({
-        offset,
-        limit: 25,
-        q: query || undefined,
-        ...Object.fromEntries(new URLSearchParams(extra)),
-      })}`,
-    )
-      .then((data) => {
-        if (!cancelled) setPage(data)
-      })
-      .catch((e) => {
-        if (!cancelled) setError(errorText(e))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [id, path, offset, query, extra])
+/** Paginated, searchable and filterable fetch of `/analyses/:id/:resource`. */
+export function useResource<T>(
+  analysisId: string,
+  resource: string,
+  { query = '', filters = {} }: { query?: string; filters?: FilterValues } = {},
+) {
+  const criteria = qs({ q: query, ...filters })
 
-  return { page, offset, setOffset, loading, error }
+  // The offset belongs to one set of criteria; changing the search or a filter
+  // starts from the first page again without a second request.
+  const [paging, setPaging] = useState({ criteria, offset: 0 })
+  const offset = paging.criteria === criteria ? paging.offset : 0
+  const setOffset = useCallback((next: number) => setPaging({ criteria, offset: next }), [criteria])
+
+  const { data: page, loading, error } = useApi<Page<T>>(
+    `/analyses/${encodeURIComponent(analysisId)}/${resource}?${qs({ offset, limit: PAGE_SIZE })}&${criteria}`,
+    { keepPrevious: true },
+  )
+
+  return {
+    page,
+    items: page?.items ?? [],
+    total: page?.pagination.total,
+    offset,
+    setOffset,
+    loading,
+    error,
+  }
 }
+
+export type Resource<T> = ReturnType<typeof useResource<T>>

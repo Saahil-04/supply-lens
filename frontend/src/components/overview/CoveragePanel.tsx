@@ -1,39 +1,38 @@
-import { ArrowRight, CircleHelp, FileCheck2 } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import type { Analysis } from '../../api'
-import type { Tab } from '../../lib/tabs'
-import { CoverageRow } from './CoverageRow'
+import { formatNumber } from '../../lib/format'
+import type { TabId } from '../../lib/tabs'
+import { Panel } from '../ui/Panel'
+import { ProgressBar } from '../ui/ProgressBar'
 
-export function CoveragePanel({
-  analysis,
-  onNavigate,
-}: {
-  analysis: Analysis
-  onNavigate: (tab: Tab) => void
-}) {
-  const summary = analysis.summary || {}
+function CoverageRow({ label, value, total }: { label: string; value: unknown; total?: unknown }) {
+  const count = typeof value === 'number' ? value : 0
+  const hasTotal = typeof total === 'number'
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h3>Analysis coverage</h3>
-          <p>What this scan could resolve</p>
-        </div>
-        <FileCheck2 size={18} className="panel-heading-icon" />
+    <div className="coverage-row">
+      <div className="coverage-label">
+        <span>{label}</span>
+        <b>
+          {formatNumber(value)}
+          {hasTotal && <span className="muted"> / {formatNumber(total)}</span>}
+        </b>
       </div>
-      <CoverageRow
-        label="Projects with resolved graph"
-        value={summary.projects_with_resolved_graph}
-        total={summary.projects_discovered}
-      />
+      <ProgressBar value={count} max={hasTotal && total > 0 ? total : count} tone="success" />
+    </div>
+  )
+}
+
+export function CoveragePanel({ analysis, onNavigate }: { analysis: Analysis; onNavigate: (tab: TabId) => void }) {
+  const { summary } = analysis
+  return (
+    <Panel title="Analysis coverage" description="What this analysis could resolve">
+      <CoverageRow label="Projects with resolved graph" value={summary.projects_with_resolved_graph} total={summary.projects_discovered} />
       <CoverageRow label="Manifests found" value={summary.manifests_found} total={summary.projects_discovered} />
       <CoverageRow label="Lockfiles found" value={summary.lockfiles_found} />
-      <div className="coverage-note">
-        <CircleHelp size={15} />
-        <span>Lockfiles without a matching manifest are not silently assigned to a project.</span>
-      </div>
-      <button className="button button-quiet full-width" onClick={() => onNavigate('Projects')}>
+      <p className="note">Lockfiles without a matching manifest are never silently assigned to a project.</p>
+      <button type="button" className="btn btn-secondary btn-block" onClick={() => onNavigate('projects')}>
         Inspect projects <ArrowRight size={15} />
       </button>
-    </section>
+    </Panel>
   )
 }

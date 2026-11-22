@@ -1,41 +1,36 @@
 import type { PackageItem } from '../../api'
+import { Badge } from '../ui/Badge'
 
 export function PackagesTable({ items }: { items: PackageItem[] }) {
   return (
     <div className="table-scroll">
-      <table>
+      <table className="table">
         <thead>
           <tr>
             <th>Package</th>
             <th>Version</th>
             <th>Type</th>
             <th>Scope</th>
-            <th>Project lockfile</th>
+            <th>Lockfile</th>
           </tr>
         </thead>
         <tbody>
-          {items.map((p, i) => (
-            <tr key={`${p.id}-${i}`}>
+          {items.map((pkg, index) => (
+            <tr key={`${pkg.id}-${index}`}>
               <td>
-                <div className="cell-main">{p.name}</div>
-                <div className="cell-sub mono">{p.id}</div>
+                <div className="cell-title">{pkg.name}</div>
+                <div className="cell-sub mono truncate" title={pkg.id}>
+                  {pkg.id}
+                </div>
               </td>
               <td>
-                <code className="version-code">{p.version || '—'}</code>
+                <code className="version">{pkg.version ?? '—'}</code>
               </td>
               <td>
-                <span className={`pill ${p.is_direct ? 'pill-blue' : 'pill-neutral'}`}>
-                  {p.is_direct ? 'Direct' : 'Transitive'}
-                </span>
+                <Badge tone={pkg.is_direct ? 'info' : 'neutral'}>{pkg.is_direct ? 'Direct' : 'Transitive'}</Badge>
               </td>
-              <td>
-                {p.is_dev ? (
-                  <span className="pill pill-violet">Development</span>
-                ) : (
-                  <span className="muted">Production / other</span>
-                )}
-              </td>
-              <td className="path-cell">{p.lockfile || p.path || '—'}</td>
+              <td>{pkg.is_dev ? <Badge tone="violet">Development</Badge> : <span className="muted">Production</span>}</td>
+              <td className="mono path">{pkg.lockfile || pkg.path || '—'}</td>
             </tr>
           ))}
         </tbody>

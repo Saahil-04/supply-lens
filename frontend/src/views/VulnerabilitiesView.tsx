@@ -1,113 +1,85 @@
-import { useMemo, useState } from 'react'
-import { qs, request, type Page, type Vulnerability } from '../api'
+import { useState } from 'react'
+import type { Vulnerability } from '../api'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useResource } from '../hooks/useResource'
-import { errorText } from '../lib/format'
-import { Pagination } from '../components/ui/Pagination'
-import { ResourceHeader } from '../components/ui/ResourceHeader'
-import { SearchBox } from '../components/ui/SearchBox'
-import { TableState } from '../components/ui/TableState'
-import { VulnerabilityModal } from '../components/vulnerabilities/VulnerabilityModal'
+import { REACHABILITY, SEVERITIES } from '../lib/format'
+import { triState, withDefault } from '../lib/filters'
+import { VulnerabilityDrawer } from '../components/vulnerabilities/VulnerabilityDrawer'
 import { VulnerabilityTable } from '../components/vulnerabilities/VulnerabilityTable'
+import { DataPanel } from '../components/ui/DataPanel'
+import { FilterBar } from '../components/ui/FilterBar'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Select } from '../components/ui/Select'
 
-const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']
-const REACHABILITY_OPTIONS = [
-  ['imported', 'Imported by your code'],
-  ['transitive_of_imported', 'Used via a dependency'],
-  ['tests_or_tooling_only', 'Tests / tooling only'],
-  ['dev_only', 'Dev dependency'],
-  ['not_imported', 'Not imported'],
-  ['unknown', 'Unknown'],
+const DEFAULT_SORT = 'priority'
+
+const SEVERITY_OPTIONS = withDefault(
+  'All severities',
+  SEVERITIES.map((value) => ({ value, label: value.charAt(0) + value.slice(1).toLowerCase() })),
+)
+const FIX_OPTIONS = withDefault('Any fix status', [
+  { value: 'true', label: 'Fix available' },
+  { value: 'false', label: 'No known fix' },
+])
+const USAGE_OPTIONS = withDefault(
+  'All usage states',
+  Object.entries(REACHABILITY).map(([value, { label }]) => ({ value, label })),
+)
+const SORT_OPTIONS = [
+  { value: 'priority', label: 'Sort by priority' },
+  { value: 'severity', label: 'Sort by severity' },
 ]
 
-export function VulnerabilitiesView({ id, onError }: { id: string; onError: (e: string) => void }) {
-  const [query, setQuery] = useState('')
+export function VulnerabilitiesView({ id }: { id: string }) {
+  const [search, setSearch] = useState('')
   const [severity, setSeverity] = useState('')
   const [hasFix, setHasFix] = useState('')
-  const [reachability, setReachability] = useState('')
-  const [sort, setSort] = useState('priority')
+  const [usage, setUsage] = useState('')
+  const [sort, setSort] = useState(DEFAULT_SORT)
   const [selected, setSelected] = useState<Vulnerability | null>(null)
-  const [detail, setDetail] = useState<Record<string, unknown> | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
 
-  const extra = useMemo(
-    () =>
-      qs({
-        severity: severity || undefined,
-        has_fix: hasFix === '' ? undefined : hasFix === 'true',
-        reachability: reachability || undefined,
-        sort,
-      }),
-    [severity, hasFix, reachability, sort],
-  )
-  const q = useResource<Vulnerability>(id, 'vulnerabilities', query, extra)
-  const items = q.page?.items || []
+  const resource = useResource<Vulnerability>(id, 'vulnerabilities', {
+    query: useDebouncedValue(search),
+    filters: { severity, has_fix: triState(hasFix), reachability: usage, sort },
+  })
 
-  const openDetail = async (v: Vulnerability) => {
-    setSelected(v)
-    setDetail(null)
-    setDetailLoading(true)
-    try {
-      setDetail(
-        await request<Record<string, unknown>>(
-          v.links?.detail ||
-            `/analyses/${encodeURIComponent(id)}/vulnerabilities/${encodeURIComponent(v.finding_id)}`,
-        ),
-      )
-    } catch (e) {
-      onError(errorText(e))
-    } finally {
-      setDetailLoading(false)
-    }
+  const reset = () => {
+    setSearch('')
+    setSeverity('')
+    setHasFix('')
+    setUsage('')
+    setSort(DEFAULT_SORT)
   }
 
   return (
     <>
-      <ResourceHeader
-        eyebrow="SECURITY FINDINGS"
+      <PageHeader
         title="Vulnerabilities"
-        body="OSV advisory findings mapped to installed package instances, ranked by priority (severity adjusted for whether the package is actually used). A finding does not by itself prove runtime exploitability."
-        total={q.page?.pagination.total}
+        description="OSV advisories mapped to installed packages and ranked by priority: severity, adjusted for whether the package is actually used. A finding alone does not prove it can be exploited."
+        total={resource.total}
       />
-      <div className="toolbar">
-        <SearchBox value={query} onChange={setQuery} placeholder="Search advisory, package, or summary…" />
-        <select className="filter-select" value={severity} onChange={(e) => setSeverity(e.target.value)}>
-          <option value="">All severities</option>
-          {SEVERITIES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        <select className="filter-select" value={hasFix} onChange={(e) => setHasFix(e.target.value)}>
-          <option value="">Fix availability</option>
-          <option value="true">Fix available</option>
-          <option value="false">No known fix</option>
-        </select>
-        <select className="filter-select" value={reachability} onChange={(e) => setReachability(e.target.value)}>
-          <option value="">All usage states</option>
-          {REACHABILITY_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value)}>
-          <option value="priority">Sort: priority</option>
-          <option value="severity">Sort: severity</option>
-        </select>
-      </div>
+      <FilterBar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search advisory, package or summary…"
+        isFiltered={!!(search || severity || hasFix || usage || sort !== DEFAULT_SORT)}
+        onReset={reset}
+      >
+        <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
+        <Select label="Fix availability" value={hasFix} onChange={setHasFix} options={FIX_OPTIONS} />
+        <Select label="Usage" value={usage} onChange={setUsage} options={USAGE_OPTIONS} />
+        <Select label="Sort order" value={sort} onChange={setSort} options={SORT_OPTIONS} />
+      </FilterBar>
 
-      <div className="table-card">
-        <TableState loading={q.loading} error={q.error} empty={!q.loading && !q.error && items.length === 0} />
-        {items.length > 0 && <VulnerabilityTable items={items} onSelect={(v) => void openDetail(v)} />}
-      </div>
-      <Pagination page={q.page as Page<unknown> | null} offset={q.offset} setOffset={q.setOffset} />
+      <DataPanel resource={resource}>
+        {(items) => <VulnerabilityTable items={items} onSelect={setSelected} />}
+      </DataPanel>
 
       {selected && (
-        <VulnerabilityModal
+        <VulnerabilityDrawer
+          key={selected.finding_id}
+          analysisId={id}
           selected={selected}
-          detail={detail}
-          loading={detailLoading}
           onClose={() => setSelected(null)}
         />
       )}

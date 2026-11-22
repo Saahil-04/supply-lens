@@ -1,42 +1,59 @@
-import { useMemo, useState } from 'react'
-import { qs, type Page, type Recommendation } from '../api'
+import { useState } from 'react'
+import type { Recommendation } from '../api'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useResource } from '../hooks/useResource'
+import { triState, withDefault } from '../lib/filters'
 import { RecommendationCard } from '../components/recommendations/RecommendationCard'
-import { Pagination } from '../components/ui/Pagination'
-import { ResourceHeader } from '../components/ui/ResourceHeader'
-import { SearchBox } from '../components/ui/SearchBox'
-import { TableState } from '../components/ui/TableState'
+import { DataPanel } from '../components/ui/DataPanel'
+import { FilterBar } from '../components/ui/FilterBar'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Select } from '../components/ui/Select'
+
+const FIX_OPTIONS = withDefault('All recommendations', [
+  { value: 'true', label: 'Fix available' },
+  { value: 'false', label: 'No fix listed' },
+])
 
 export function RecommendationsView({ id }: { id: string }) {
-  const [query, setQuery] = useState('')
+  const [search, setSearch] = useState('')
   const [hasFix, setHasFix] = useState('')
-  const extra = useMemo(() => qs({ has_fix: hasFix === '' ? undefined : hasFix === 'true' }), [hasFix])
-  const q = useResource<Recommendation>(id, 'recommendations', query, extra)
-  const items = q.page?.items || []
+
+  const resource = useResource<Recommendation>(id, 'recommendations', {
+    query: useDebouncedValue(search),
+    filters: { has_fix: triState(hasFix) },
+  })
 
   return (
     <>
-      <ResourceHeader
-        eyebrow="REMEDIATION"
+      <PageHeader
         title="Recommendations"
-        body="Prioritize updates suggested by the analysis. Verify compatibility and regression-test changes before merging."
-        total={q.page?.pagination.total}
+        description="Suggested updates, most urgent first. Verify compatibility and regression-test each change before merging."
+        total={resource.total}
       />
-      <div className="toolbar">
-        <SearchBox value={query} onChange={setQuery} placeholder="Search package or recommendation…" />
-        <select className="filter-select" value={hasFix} onChange={(e) => setHasFix(e.target.value)}>
-          <option value="">All recommendations</option>
-          <option value="true">Fix available</option>
-          <option value="false">No fix listed</option>
-        </select>
-      </div>
-      <div className="recommendation-list">
-        <TableState loading={q.loading} error={q.error} empty={!q.loading && !q.error && items.length === 0} />
-        {items.map((r, i) => (
-          <RecommendationCard key={`${r.package_name}-${r.installed_version}-${i}`} r={r} />
-        ))}
-      </div>
-      <Pagination page={q.page as Page<unknown> | null} offset={q.offset} setOffset={q.setOffset} />
+      <FilterBar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search package or recommendation…"
+        isFiltered={!!(search || hasFix)}
+        onReset={() => {
+          setSearch('')
+          setHasFix('')
+        }}
+      >
+        <Select label="Fix availability" value={hasFix} onChange={setHasFix} options={FIX_OPTIONS} />
+      </FilterBar>
+      <DataPanel resource={resource} surface="plain">
+        {(items) => (
+          <div className="recommendation-list">
+            {items.map((item, index) => (
+              <RecommendationCard
+                key={`${item.package_id ?? item.package_name}-${item.installed_version}-${index}`}
+                recommendation={item}
+              />
+            ))}
+          </div>
+        )}
+      </DataPanel>
     </>
   )
 }

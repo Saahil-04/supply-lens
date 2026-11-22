@@ -1,4 +1,4 @@
-// lucide-react v1+ removed brand icons (including Github), so we ship a local one.
+// lucide-react v1+ no longer ships brand icons, so the GitHub mark lives here.
 export function Github({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

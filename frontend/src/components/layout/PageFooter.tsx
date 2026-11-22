@@ -1,21 +1,14 @@
 import type { Analysis } from '../../api'
+import { formatExpiry } from '../../lib/format'
 
 export function PageFooter({ analysis }: { analysis: Analysis }) {
+  const expiry = formatExpiry(analysis.expires_at)
   return (
     <footer className="page-footer">
       <span>
-        Analysis <code>{analysis.analysis_id.slice(0, 8)}…</code>
+        Analysis <code>{analysis.analysis_id.slice(0, 8)}</code>
       </span>
-      <span>
-        Results retained until{' '}
-        {analysis.expires_at
-          ? new Date(analysis.expires_at).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })
-          : 'expiry'}{' '}
-        · in-memory backend storage
-      </span>
+      {expiry && <span>Results available until {expiry}</span>}
     </footer>
   )
 }

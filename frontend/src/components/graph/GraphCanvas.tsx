@@ -1,146 +1,240 @@
-import { useMemo, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react'
-import { Minus, Plus, RotateCcw } from 'lucide-react'
-import type { Graph } from '../../api'
+import { useId, useMemo, useState, type ReactNode } from 'react'
+import { Loader2, Maximize, Minimize, Minus, Plus, ScanSearch } from 'lucide-react'
+import type { Viewport } from '../../hooks/useViewport'
+import type { GraphEdgeModel, GraphModel, GraphNodeModel } from '../../lib/graph'
+import { packageLabel, truncate } from '../../lib/format'
+
+/* Layout-unit sizes. They are scaled against the zoom so nodes stay legible. */
+const NODE_RADIUS = { root: 14, near: 9, far: 7 }
+const LABEL_SIZE = 12
+const MAX_LABEL = 26
+const ARROW_LIMIT = 40
+const DENSE_LIMIT = 60
+const ALL_LABELS_ZOOM = 1.2
+const SMALL_GRAPH = 40
+
+const nodeRadius = (node: GraphNodeModel) => (node.isRoot ? NODE_RADIUS.root : node.hop === 1 ? NODE_RADIUS.near : NODE_RADIUS.far)
+
+/** Snaps the zoom to ~12% steps so the scene only re-renders when sizes visibly change. */
+const quantize = (k: number) => 1.12 ** Math.round(Math.log(k) / Math.log(1.12))
 
 type Point = { x: number; y: number }
 
-/** Interactive neighbourhood graph with zoom, pan and relationship highlighting. */
-export function GraphCanvas({ graph }: { graph: Graph }) {
-  const nodes = graph.nodes || []
-  const edges = graph.edges || []
-  const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
-  const [dragging, setDragging] = useState(false)
-  const [dragOrigin, setDragOrigin] = useState<Point | null>(null)
-  const [dragStartPan, setDragStartPan] = useState<Point>({ x: 0, y: 0 })
+function edgePath(a: GraphNodeModel, b: GraphNodeModel, curved: boolean, sizeScale: number, arrow: boolean) {
+  // Bend same-ring edges toward the centre; straight otherwise.
+  const control: Point | null = curved ? { x: ((a.x + b.x) / 2) * 0.5, y: ((a.y + b.y) / 2) * 0.5 } : null
+  const toward = (from: Point, to: Point, distance: number): Point => {
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const length = Math.hypot(dx, dy) || 1
+    return { x: from.x + (dx / length) * distance, y: from.y + (dy / length) * distance }
+  }
+  const gap = 2 * sizeScale
+  const start = toward(a, control ?? b, nodeRadius(a) * sizeScale + gap)
+  const end = toward(b, control ?? a, nodeRadius(b) * sizeScale + gap + (arrow ? 3 * sizeScale : 0))
+  return control
+    ? `M${start.x} ${start.y}Q${control.x} ${control.y} ${end.x} ${end.y}`
+    : `M${start.x} ${start.y}L${end.x} ${end.y}`
+}
 
-  const positions = useMemo(() => {
-    const root = nodes.find((node) => node.id === graph.root_package_id)
-    const others = nodes.filter((node) => node.id !== graph.root_package_id)
-    return [
-      ...(root ? [{ node: root, x: 50, y: 50 }] : []),
-      ...others.map((node, i) => {
-        // Two rings reduce the single-ring "scrambled egg" effect for larger neighbourhoods.
-        const ring = i < 18 ? 1 : 2
-        const ringNodes = ring === 1 ? Math.min(others.length, 18) : Math.max(others.length - 18, 1)
-        const index = ring === 1 ? i : i - 18
-        const radius = ring === 1 ? 23 : 42
-        const angle = (2 * Math.PI * index) / ringNodes - Math.PI / 2 + (ring === 2 ? Math.PI / Math.max(ringNodes, 1) : 0)
-        return { node, x: 50 + Math.cos(angle) * radius, y: 50 + Math.sin(angle) * radius }
-      }),
-    ]
-  }, [nodes, graph.root_package_id])
+type SceneOptions = {
+  model: GraphModel
+  focusId: string | null
+  activeId: string | null
+  showAllLabels: boolean
+  sizeScale: number
+  textScale: number
+  markerId: string
+  onHover: (id: string | null) => void
+  onSelect: (id: string | null) => void
+}
 
-  const posMap = useMemo(() => new Map(positions.map((pos) => [pos.node.id, pos])), [positions])
-  const connectedIds = useMemo(() => {
-    const connected = new Set<string>()
-    if (hoveredId) {
-      connected.add(hoveredId)
-      edges.forEach((edge) => {
-        if (edge.source === hoveredId) connected.add(edge.target)
-        if (edge.target === hoveredId) connected.add(edge.source)
-      })
+function renderScene({ model, focusId, activeId, showAllLabels, sizeScale, textScale, markerId, onHover, onSelect }: SceneOptions) {
+  const related = focusId ? model.neighbors.get(focusId) : undefined
+  const showArrows = model.edges.length <= ARROW_LIMIT
+  const dense = model.edges.length > DENSE_LIMIT
+
+  const edgeElement = (edge: GraphEdgeModel) => {
+    const a = model.byId.get(edge.source)
+    const b = model.byId.get(edge.target)
+    if (!a || !b || a === b) return null
+    const isActive = !!focusId && (edge.source === focusId || edge.target === focusId)
+    const state = isActive ? 'is-active' : focusId ? 'is-dim' : dense ? 'is-faint' : ''
+    const arrow = showArrows || isActive
+    return (
+      <path
+        key={edge.key}
+        className={`graph-edge ${state}`.trim()}
+        d={edgePath(a, b, edge.curved, sizeScale, arrow)}
+        markerEnd={arrow ? `url(#${markerId}-${isActive ? 'active' : 'base'})` : undefined}
+      >
+        <title>{`${a.name} → ${b.name} (${edge.type || 'dependency'})`}</title>
+      </path>
+    )
+  }
+
+  // Highlighted edges are drawn last so they sit on top.
+  const edges = [
+    ...model.edges.filter((e) => !(focusId && (e.source === focusId || e.target === focusId))).map(edgeElement),
+    ...model.edges.filter((e) => focusId && (e.source === focusId || e.target === focusId)).map(edgeElement),
+  ]
+
+  const nodes: ReactNode[] = model.nodes.map((node) => {
+    const isFocus = node.id === focusId
+    const isRelated = !!related?.has(node.id)
+    const isDim = !!focusId && !isFocus && !isRelated
+    const labelled = node.isRoot || node.hop === 1 || isFocus || isRelated || showAllLabels
+    const radius = nodeRadius(node) * sizeScale
+    const label = truncate(node.name, MAX_LABEL)
+    const fontSize = LABEL_SIZE * textScale
+    const offset = radius + 6 * textScale
+
+    // Few nodes on a ring: horizontal labels outside the node. Many: labels run along the spoke.
+    let labelProps: { x: number; y: number; textAnchor: 'start' | 'middle' | 'end'; transform?: string }
+    if (node.isRoot) {
+      labelProps = { x: 0, y: radius + fontSize + 4 * textScale, textAnchor: 'middle' }
+    } else if (node.ringSize <= 14) {
+      const right = Math.cos(node.angle) >= 0
+      labelProps = { x: right ? offset : -offset, y: fontSize * 0.35, textAnchor: right ? 'start' : 'end' }
+    } else {
+      const degrees = (node.angle * 180) / Math.PI
+      const right = Math.cos(node.angle) >= 0
+      labelProps = {
+        x: right ? offset : -offset,
+        y: fontSize * 0.35,
+        textAnchor: right ? 'start' : 'end',
+        transform: `rotate(${right ? degrees : degrees + 180})`,
+      }
     }
-    return connected
-  }, [hoveredId, edges])
 
-  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }) }
-  const onWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
-    // Let ordinary wheel gestures scroll the page. Zoom the graph only when
-    // the user explicitly holds Ctrl/Cmd, so one gesture never does both.
-    if (!event.ctrlKey && !event.metaKey) return
-    event.preventDefault()
-    setZoom((current) => Math.max(0.65, Math.min(5, current * (event.deltaY < 0 ? 1.15 : 1 / 1.15))))
-  }
-  const onPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (event.button !== 0) return
-    setDragging(true)
-    setDragOrigin({ x: event.clientX, y: event.clientY })
-    setDragStartPan(pan)
-    event.currentTarget.setPointerCapture(event.pointerId)
-  }
-  const onPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (!dragging || !dragOrigin) return
-    const rect = event.currentTarget.getBoundingClientRect()
-    const scale = 100 / Math.max(rect.width, rect.height)
-    setPan({ x: dragStartPan.x + (event.clientX - dragOrigin.x) * scale, y: dragStartPan.y + (event.clientY - dragOrigin.y) * scale })
-  }
+    const classes = [
+      'graph-node',
+      node.isRoot ? 'is-root' : node.hop === 1 ? 'is-near' : 'is-far',
+      node.id === activeId && 'is-active',
+      isFocus && 'is-focus',
+      isDim && 'is-dim',
+    ]
+      .filter(Boolean)
+      .join(' ')
+
+    return (
+      <g
+        key={node.id}
+        className={classes}
+        transform={`translate(${node.x} ${node.y})`}
+        onPointerEnter={() => onHover(node.id)}
+        onPointerLeave={() => onHover(null)}
+        onClick={(event) => {
+          event.stopPropagation()
+          onSelect(node.id)
+        }}
+      >
+        <title>{`${packageLabel(node.name, node.version)}${node.isRoot ? ' · selected package' : ''}`}</title>
+        {node.id === activeId && <circle className="graph-node-halo" r={radius + 5 * sizeScale} strokeWidth={2 * sizeScale} />}
+        <circle className="graph-node-dot" r={radius} strokeWidth={1.5 * sizeScale} />
+        {labelled && (
+          <text className="graph-label" fontSize={fontSize} strokeWidth={3.5 * textScale} {...labelProps}>
+            {label}
+          </text>
+        )}
+      </g>
+    )
+  })
+
+  return { edges, nodes }
+}
+
+type Props = {
+  model: GraphModel
+  viewport: Viewport
+  activeId: string | null
+  onSelect: (id: string | null) => void
+  loading: boolean
+  expanded: boolean
+  onToggleExpanded: () => void
+}
+
+/** SVG rendering of a graph model with pan, zoom, hover highlighting and selection. */
+export function GraphCanvas({ model, viewport, activeId, onSelect, loading, expanded, onToggleExpanded }: Props) {
+  const markerId = useId().replace(/:/g, '')
+  const [hoverId, setHoverId] = useState<string | null>(null)
+  const { view, dragging, wasDragged, bindContainer, containerProps, zoomIn, zoomOut, fit } = viewport
+
+  const zoom = quantize(view.k)
+  const sizeScale = zoom ** -0.5
+  const textScale = 1 / zoom
+  const showAllLabels = view.k >= ALL_LABELS_ZOOM || model.nodes.length <= SMALL_GRAPH
+  const focusId = hoverId ?? activeId
+
+  // Rebuilt only when something visible changes, not on every pan frame.
+  const scene = useMemo(
+    () =>
+      renderScene({ model, focusId, activeId, showAllLabels, sizeScale, textScale, markerId, onHover: setHoverId, onSelect }),
+    [model, focusId, activeId, showAllLabels, sizeScale, textScale, markerId, onSelect],
+  )
+
+  const arrowSize = 9 * textScale
 
   return (
-    <div className="graph-canvas-wrap">
-      <div className="graph-zoom-controls" aria-label="Graph navigation controls">
-        <button onClick={() => setZoom((v) => Math.min(5, v * 1.25))} title="Zoom in" aria-label="Zoom in"><Plus size={16} /></button>
-        <span>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom((v) => Math.max(0.65, v / 1.25))} title="Zoom out" aria-label="Zoom out"><Minus size={16} /></button>
-        <button onClick={resetView} title="Fit graph to view / reset zoom" aria-label="Fit graph to view"><RotateCcw size={15} /></button>
-      </div>
-      <div className="graph-canvas">
-        <svg
-          viewBox="0 0 100 100"
-          role="img"
-          aria-label="Interactive dependency neighborhood graph. Scroll to move the page; hold Ctrl or Cmd while scrolling to zoom the graph, and drag to pan."
-          onWheel={onWheel}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={() => { setDragging(false); setDragOrigin(null) }}
-          onPointerCancel={() => { setDragging(false); setDragOrigin(null) }}
-          onPointerLeave={() => { if (!dragging) setHoveredId(null) }}
-          style={{ cursor: dragging ? 'grabbing' : 'grab', touchAction: 'none' }}
+    <div
+      ref={bindContainer}
+      className={`graph-canvas ${dragging ? 'is-dragging' : ''}`.trim()}
+      tabIndex={0}
+      aria-label="Dependency graph. Drag to pan, hold Ctrl or Cmd and scroll to zoom. Use the package list to move through packages with the keyboard."
+      onClick={() => !wasDragged() && onSelect(null)}
+      {...containerProps}
+    >
+      <svg className="graph-svg" role="img" aria-label={`Graph with ${model.nodes.length} packages`}>
+        <defs>
+          {(['base', 'active'] as const).map((kind) => (
+            <marker
+              key={kind}
+              id={`${markerId}-${kind}`}
+              className={`graph-arrow graph-arrow-${kind}`}
+              viewBox="0 0 10 10"
+              refX="10"
+              refY="5"
+              markerUnits="userSpaceOnUse"
+              markerWidth={arrowSize}
+              markerHeight={arrowSize}
+              orient="auto"
+            >
+              <path d="M0 0L10 5L0 10z" />
+            </marker>
+          ))}
+        </defs>
+        <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+          <g>{scene.edges}</g>
+          <g>{scene.nodes}</g>
+        </g>
+      </svg>
+
+      <div className="graph-controls" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="icon-button" onClick={zoomIn} aria-label="Zoom in" title="Zoom in">
+          <Plus size={16} />
+        </button>
+        <button type="button" className="icon-button" onClick={zoomOut} aria-label="Zoom out" title="Zoom out">
+          <Minus size={16} />
+        </button>
+        <button type="button" className="icon-button" onClick={fit} aria-label="Fit graph to view" title="Fit to view">
+          <ScanSearch size={16} />
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={onToggleExpanded}
+          aria-label={expanded ? 'Exit full screen' : 'Full screen'}
+          title={expanded ? 'Exit full screen' : 'Full screen'}
         >
-          <g transform={`translate(${pan.x} ${pan.y}) translate(50 50) scale(${zoom}) translate(-50 -50)`}>
-            {edges.map((edge, i) => {
-              const a = posMap.get(edge.source)
-              const b = posMap.get(edge.target)
-              if (!a || !b) return null
-              const active = !!hoveredId && (edge.source === hoveredId || edge.target === hoveredId)
-              const dim = !!hoveredId && !active
-              return (
-                <g key={`${edge.source}-${edge.target}-${i}`} className={active ? 'graph-edge-group edge-active' : dim ? 'graph-edge-group edge-dim' : 'graph-edge-group'}>
-                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="graph-edge" />
-                  <title>{`${a.node.name || a.node.id} → ${b.node.name || b.node.id} (${edge.dependency_type || 'dependency'})`}</title>
-                </g>
-              )
-            })}
-            {positions.map(({ node, x, y }) => {
-              const root = node.id === graph.root_package_id
-              const hovered = node.id === hoveredId
-              const related = connectedIds.has(node.id)
-              const dim = !!hoveredId && !related
-              const showLabel = root || hovered || (related && nodes.length <= 60)
-              return (
-                <g
-                  key={node.id}
-                  className={`graph-node ${root ? 'is-root' : ''} ${hovered ? 'is-hovered' : ''} ${dim ? 'is-dimmed' : ''} ${related ? 'is-related' : ''}`}
-                  onPointerEnter={() => setHoveredId(node.id)}
-                  onPointerLeave={() => setHoveredId((current) => current === node.id ? null : current)}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`${node.name || node.id}${node.version ? ` version ${node.version}` : ''}`}
-                  onFocus={() => setHoveredId(node.id)}
-                  onBlur={() => setHoveredId(null)}
-                >
-                  <circle cx={x} cy={y} r={root ? 3.8 : hovered ? 3.6 : 2.5} className={root ? 'graph-node-root' : 'graph-node-circle'} />
-                  {showLabel && (
-                    <text x={x} y={y + (root || hovered ? 6 : 4.8)} textAnchor="middle" className="graph-node-label">
-                      {String(node.name || node.id).slice(0, 22)}
-                    </text>
-                  )}
-                  <title>{`${node.name || node.id}${node.version ? `@${node.version}` : ''}${root ? ' · selected package' : ''}`}</title>
-                </g>
-              )
-            })}
-          </g>
-        </svg>
+          {expanded ? <Minimize size={16} /> : <Maximize size={16} />}
+        </button>
       </div>
-      {hoveredId && posMap.get(hoveredId) && (
-        <div className="graph-hover-card">
-          <b>{posMap.get(hoveredId)?.node.name || hoveredId}</b>
-          <span>{posMap.get(hoveredId)?.node.version ? `Version ${posMap.get(hoveredId)?.node.version}` : 'Version not provided'}</span>
-          <span>{edges.filter((edge) => edge.source === hoveredId || edge.target === hoveredId).length} connected relationship(s)</span>
-          {hoveredId === graph.root_package_id && <em>Selected root package</em>}
+
+      <div className="graph-hint">Drag to pan · Ctrl/⌘ + scroll to zoom · Click a package to inspect it</div>
+
+      {loading && (
+        <div className="graph-loading" role="status">
+          <Loader2 size={16} className="spin" /> Updating graph…
         </div>
       )}
     </div>

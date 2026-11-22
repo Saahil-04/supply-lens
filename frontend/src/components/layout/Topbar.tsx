@@ -1,46 +1,56 @@
 import { Menu, Moon, Sun, X } from 'lucide-react'
-import type { Tab } from '../../lib/tabs'
+import type { Analysis } from '../../api'
+import type { Theme } from '../../hooks/useTheme'
+import { tabLabel, type TabId } from '../../lib/tabs'
 
-export function Topbar({
-  tab,
-  hasAnalysis,
-  onClose,
-  sidebarOpen,
-  onOpenSidebar,
-  theme,
-  onToggleTheme,
-}: {
-  tab: Tab
-  hasAnalysis: boolean
-  onClose: () => void
-  sidebarOpen: boolean
+type Props = {
+  tab: TabId
+  analysis: Analysis | null
+  showMenuButton: boolean
   onOpenSidebar: () => void
-  theme: 'light' | 'dark'
+  theme: Theme
   onToggleTheme: () => void
-}) {
+  onCloseAnalysis: () => void
+}
+
+export function Topbar({ tab, analysis, showMenuButton, onOpenSidebar, theme, onToggleTheme, onCloseAnalysis }: Props) {
+  const repository = analysis?.repository
+  const nextTheme = theme === 'light' ? 'dark' : 'light'
+
   return (
     <header className="topbar">
       <div className="topbar-left">
-        {!sidebarOpen && (
-          <button className="icon-button sidebar-open" onClick={onOpenSidebar} aria-label="Open sidebar" title="Open navigation">
+        {showMenuButton && (
+          <button type="button" className="icon-button" onClick={onOpenSidebar} aria-label="Open navigation">
             <Menu size={18} />
           </button>
         )}
-        <div className="breadcrumb">
-          Workspace <span>/</span> <b>{tab}</b>
-        </div>
+        <nav className="breadcrumb" aria-label="Breadcrumb">
+          {repository?.owner && repository.name && (
+            <>
+              <span className="breadcrumb-repo">
+                {repository.owner}/{repository.name}
+              </span>
+              <span className="breadcrumb-sep" aria-hidden="true">/</span>
+            </>
+          )}
+          <b>{tabLabel(tab)}</b>
+        </nav>
       </div>
+
       <div className="topbar-right">
-        <span className="live-label">
-          <span className="status-dot online" /> Repository snapshot analysis
-        </span>
-        <button className="theme-toggle" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}>
-          {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-          <span>{theme === 'light' ? 'Dark mode' : 'Light mode'}</span>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={onToggleTheme}
+          aria-label={`Switch to ${nextTheme} theme`}
+          title={`Switch to ${nextTheme} theme`}
+        >
+          {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
         </button>
-        {hasAnalysis && (
-          <button className="button button-quiet button-small" onClick={onClose}>
-            <X size={14} /> Close scan
+        {analysis && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCloseAnalysis}>
+            <X size={14} /> Close analysis
           </button>
         )}
       </div>

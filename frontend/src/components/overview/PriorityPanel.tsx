@@ -1,57 +1,59 @@
 import { ArrowRight, Info } from 'lucide-react'
-import { summaryExtras, type Analysis, type PriorityCounts } from '../../api'
-import { PRIORITY_LABEL, REACHABILITY_LABEL, UNKNOWN_REASON, n } from '../../lib/format'
-import type { Tab } from '../../lib/tabs'
+import { reachabilityMetadata, summaryExtras, type Analysis, type PriorityCounts } from '../../api'
+import { PRIORITY, REACHABILITY, UNKNOWN_REASON, formatNumber } from '../../lib/format'
+import type { TabId } from '../../lib/tabs'
+import { Badge } from '../ui/Badge'
+import { Panel } from '../ui/Panel'
+import { ProgressBar } from '../ui/ProgressBar'
 
 const LEVELS: Array<keyof PriorityCounts> = ['P1', 'P2', 'P3', 'P4']
 
-/** Severity-only ranking next to the context-aware ranking, so the effect of reachability is visible. */
-export function PriorityPanel({ analysis, onNavigate }: { analysis: Analysis; onNavigate: (tab: Tab) => void }) {
+/** Severity-only ranking beside the context-aware ranking, so the effect of reachability is visible. */
+export function PriorityPanel({ analysis, onNavigate }: { analysis: Analysis; onNavigate: (tab: TabId) => void }) {
   const extras = summaryExtras(analysis)
   const after = extras.priority_counts
   const before = extras.baseline_priority_counts
   if (!after || !before) return null
 
-  const meta = analysis.analysis_metadata?.reachability as
-    | { enabled?: boolean; unknown_reasons?: Record<string, number>; files_scanned?: number; max_files?: number; projects_truncated?: number; method?: string }
-    | undefined
+  const meta = reachabilityMetadata(analysis)
   const enabled = !!meta?.enabled
-  const statusCounts = extras.reachability || {}
-  const total = LEVELS.reduce((sum, l) => sum + (after[l] || 0), 0)
+  const usage = Object.entries(extras.reachability ?? {})
+  const unknownReasons = Object.entries(meta?.unknown_reasons ?? {})
+  const total = LEVELS.reduce((sum, level) => sum + (after[level] || 0), 0)
+  const largest = Math.max(1, ...LEVELS.map((level) => Math.max(after[level] || 0, before[level] || 0)))
 
   return (
-    <section className="panel priority-panel">
-      <div className="panel-heading">
-        <div>
-          <h3>Remediation priority</h3>
-          <p>
-            {enabled
-              ? 'Severity alone vs. severity adjusted for whether the package is actually used'
-              : 'Reachability was not checked, so priority follows severity only'}
-          </p>
-        </div>
-      </div>
-
+    <Panel
+      title="Remediation priority"
+      description={
+        enabled
+          ? 'Severity alone, compared with severity adjusted for whether each package is actually used'
+          : 'Reachability was not checked, so priority follows severity only'
+      }
+    >
       {total > 0 && (
         <table className="priority-table">
           <thead>
             <tr>
-              <th></th>
-              <th>Severity only</th>
-              <th>Context-aware</th>
+              <th scope="col">Priority</th>
+              <th scope="col">Severity only</th>
+              <th scope="col">Context-aware</th>
             </tr>
           </thead>
           <tbody>
-            {LEVELS.map((level, i) => (
+            {LEVELS.map((level, index) => (
               <tr key={level}>
+                <th scope="row">
+                  <Badge tone={PRIORITY[index + 1].tone}>
+                    {level} · {PRIORITY[index + 1].label}
+                  </Badge>
+                </th>
+                <td className="num">{formatNumber(before[level])}</td>
                 <td>
-                  <span className={`priority-badge priority-${i + 1}`}>
-                    {level} · {PRIORITY_LABEL[i + 1]}
-                  </span>
-                </td>
-                <td>{n(before[level])}</td>
-                <td>
-                  <b>{n(after[level])}</b>
+                  <div className="bar-cell">
+                    <ProgressBar value={after[level] || 0} max={largest} tone={PRIORITY[index + 1].tone} />
+                    <b className="num">{formatNumber(after[level])}</b>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -59,36 +61,38 @@ export function PriorityPanel({ analysis, onNavigate }: { analysis: Analysis; on
         </table>
       )}
 
-      {enabled && Object.keys(statusCounts).length > 0 && (
-        <div className="reach-breakdown">
-          {Object.entries(statusCounts).map(([status, count]) => (
-            <span key={status} className="pill pill-neutral">
-              {REACHABILITY_LABEL[status] || status}: {n(count)}
-            </span>
+      {enabled && usage.length > 0 && (
+        <div className="chip-row">
+          {usage.map(([status, count]) => (
+            <Badge key={status}>
+              {REACHABILITY[status]?.label ?? status}: {formatNumber(count)}
+            </Badge>
           ))}
         </div>
       )}
 
-      {enabled && meta?.unknown_reasons && Object.keys(meta.unknown_reasons).length > 0 && (
-        <ul className="unknown-reasons">
-          {Object.entries(meta.unknown_reasons).map(([reason, count]) => (
+      {enabled && unknownReasons.length > 0 && (
+        <ul className="bullet-list">
+          {unknownReasons.map(([reason, count]) => (
             <li key={reason}>
-              <b>{n(count)}</b> unknown: {UNKNOWN_REASON[reason] || reason}
+              <b>{formatNumber(count)}</b> unknown: {UNKNOWN_REASON[reason] ?? reason}
             </li>
           ))}
         </ul>
       )}
-      <div className="advisory-note">
-        <Info size={16} />
+
+      <p className="note note-icon">
+        <Info size={15} aria-hidden="true" />
         <span>
           {enabled
-            ? `Method: package-level import scan (${n(meta?.files_scanned)} source files read), not function-level analysis. A lowered priority means “no evidence of use found”, not “safe”. Unknown never lowers priority.`
-            : 'Run a new scan with the reachability option enabled to see context-aware priorities.'}
+            ? `Usage is detected at package level from import statements (${formatNumber(meta?.files_scanned)} source files read), not function level. A lowered priority means “no evidence of use found”, not “safe”. Unknown never lowers priority.`
+            : 'Run a new analysis with the reachability check enabled to see context-aware priorities.'}
         </span>
-      </div>
-      <button className="button button-secondary full-width" onClick={() => onNavigate('Vulnerabilities')}>
+      </p>
+
+      <button type="button" className="btn btn-secondary" onClick={() => onNavigate('vulnerabilities')}>
         Review prioritized findings <ArrowRight size={15} />
       </button>
-    </section>
+    </Panel>
   )
 }

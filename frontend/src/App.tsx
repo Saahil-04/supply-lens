@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
+import { Package } from 'lucide-react'
 import { useAnalysisSession } from './hooks/useAnalysisSession'
-import { downloadSbom } from './lib/downloadSbom'
-import type { Tab } from './lib/tabs'
+import { useTabRoute } from './hooks/useTabRoute'
+import { useTheme } from './hooks/useTheme'
+import { tabLabel } from './lib/tabs'
 import { PageFooter } from './components/layout/PageFooter'
 import { Sidebar } from './components/layout/Sidebar'
 import { Topbar } from './components/layout/Topbar'
 import { EmptyState } from './components/ui/EmptyState'
+import { LoadingState } from './components/ui/LoadingState'
 import { GraphView } from './views/GraphView'
 import { OverviewView } from './views/OverviewView'
 import { PackagesView } from './views/PackagesView'
@@ -13,76 +16,84 @@ import { ProjectsView } from './views/ProjectsView'
 import { RecommendationsView } from './views/RecommendationsView'
 import { VulnerabilitiesView } from './views/VulnerabilitiesView'
 
-export default function App() {
-  const [tab, setTab] = useState<Tab>('Overview')
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('supplylens-theme')
-    return saved === 'dark' ? 'dark' : 'light'
-  })
+const COMPACT_LAYOUT = '(max-width: 960px)'
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    localStorage.setItem('supplylens-theme', theme)
-  }, [theme])
-  const session = useAnalysisSession({ onShowOverview: () => setTab('Overview') })
+export default function App() {
+  const [tab, navigate] = useTabRoute()
+  const { theme, toggleTheme } = useTheme()
+  const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(COMPACT_LAYOUT).matches)
+  const session = useAnalysisSession({ onShowOverview: () => navigate('overview') })
   const { analysis } = session
 
+  // Each page starts at the top and is titled in the browser tab.
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    document.title = `${tabLabel(tab)} · SupplyLens`
+  }, [tab])
+
+  const go = (next: typeof tab) => {
+    navigate(next)
+    if (window.matchMedia(COMPACT_LAYOUT).matches) setSidebarOpen(false)
+  }
+
+  // Views are keyed by analysis so filters and selections reset for a new analysis.
+  const key = analysis?.analysis_id
+  const renderPage = () => {
+    if (tab === 'overview') return <OverviewView session={session} onNavigate={go} />
+    if (!analysis || !key) {
+      if (session.refreshing) return <LoadingState>Loading your last analysis…</LoadingState>
+      return (
+        <EmptyState
+          icon={Package}
+          title="No active analysis"
+          action={
+            <button type="button" className="btn btn-primary" onClick={() => go('overview')}>
+              Analyze a repository
+            </button>
+          }
+        >
+          Analyze a GitHub repository first. Its results will appear here.
+        </EmptyState>
+      )
+    }
+    switch (tab) {
+      case 'projects': return <ProjectsView key={key} id={key} />
+      case 'packages': return <PackagesView key={key} id={key} />
+      case 'vulnerabilities': return <VulnerabilitiesView key={key} id={key} />
+      case 'recommendations': return <RecommendationsView key={key} id={key} />
+      case 'graph': return <GraphView key={key} id={key} />
+    }
+  }
+
   return (
-    <div className={`app-shell ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+    <div className={`app-shell ${sidebarOpen ? 'has-sidebar' : ''}`.trim()}>
+      <a className="skip-link" href="#main">Skip to content</a>
+
       <Sidebar
         tab={tab}
-        onTabChange={setTab}
+        onTabChange={go}
         analysis={analysis}
         apiOnline={session.apiOnline}
         onCheckApi={() => void session.checkApi()}
         onClose={() => setSidebarOpen(false)}
       />
+      <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
 
-      <main className="main-area">
-        <Topbar tab={tab} hasAnalysis={!!analysis} onClose={session.forgetAnalysis} sidebarOpen={sidebarOpen} onOpenSidebar={() => setSidebarOpen(true)} theme={theme} onToggleTheme={() => setTheme((current) => current === 'light' ? 'dark' : 'light')} />
-
-        <div className="page-content">
-          {!analysis && tab !== 'Overview' && (
-            <EmptyState
-              title="No active analysis"
-              body="Analyze a GitHub repository first. Your results will appear here."
-              action={() => setTab('Overview')}
-            />
-          )}
-
-          {tab === 'Overview' && (
-            <OverviewView
-              analysis={analysis}
-              analysisId={session.analysisId}
-              repositoryUrl={session.repositoryUrl}
-              onUrlChange={session.setRepositoryUrl}
-              includeReachability={session.includeReachability}
-              onIncludeReachabilityChange={session.setIncludeReachability}
-              onSubmit={session.runAnalysis}
-              loading={session.loading}
-              checking={session.checking}
-              apiOnline={session.apiOnline}
-              error={session.error}
-              onDismissError={() => session.setError('')}
-              onRefresh={() => analysis && void session.loadAnalysis(analysis.analysis_id)}
-              onForget={session.forgetAnalysis}
-              onNavigate={setTab}
-              onDownload={() => analysis && void downloadSbom(analysis.analysis_id, session.setError)}
-            />
-          )}
-
-          {analysis && tab === 'Projects' && <ProjectsView id={analysis.analysis_id} />}
-          {analysis && tab === 'Packages' && <PackagesView id={analysis.analysis_id} />}
-          {analysis && tab === 'Vulnerabilities' && (
-            <VulnerabilitiesView id={analysis.analysis_id} onError={session.setError} />
-          )}
-          {analysis && tab === 'Recommendations' && <RecommendationsView id={analysis.analysis_id} />}
-          {analysis && tab === 'Dependency graph' && <GraphView id={analysis.analysis_id} />}
-
+      <div className="main-area">
+        <Topbar
+          tab={tab}
+          analysis={analysis}
+          showMenuButton={!sidebarOpen}
+          onOpenSidebar={() => setSidebarOpen(true)}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onCloseAnalysis={session.closeAnalysis}
+        />
+        <main id="main" className="page-content">
+          {renderPage()}
           {analysis && <PageFooter analysis={analysis} />}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }
